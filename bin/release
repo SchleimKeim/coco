@@ -1,0 +1,114 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_DIR"
+
+DRY_RUN=0
+FORCE=0
+for arg in "$@"; do
+  case "$arg" in
+    -n|--dry-run) DRY_RUN=1 ;;
+    --force) FORCE=1 ;;
+    -h|--help)
+      echo "usage: release [--dry-run] [--force]"
+      echo
+      echo "cuts a release from the VERSION file: commits it if pending, tags"
+      echo "v\$VERSION, and pushes both. no-ops if v\$VERSION is already tagged."
+      exit 0
+      ;;
+    *)
+      echo "error: unknown option '$arg' (try: release --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+run() {
+  if [ "$DRY_RUN" = 1 ]; then
+    echo "+ $*"
+  else
+    "$@"
+  fi
+}
+
+# --- validate VERSION ---
+VERSION_FILE="$REPO_DIR/VERSION"
+[ -f "$VERSION_FILE" ] || { echo "error: no VERSION file at $VERSION_FILE" >&2; exit 1; }
+
+VERSION="$(tr -d ' \t\r\n' < "$VERSION_FILE")"
+case "$VERSION" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) echo "error: VERSION ('$VERSION') is not a valid X.Y.Z semver" >&2; exit 1 ;;
+esac
+TAG="v$VERSION"
+
+# duplicated from bin/coco rather than sourced: sourcing bin/coco here would
+# also run its top-level preflight/prompt logic, which a release script has
+# no business triggering.
+ver_gt() {
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<< "$1"
+  IFS=. read -r b1 b2 b3 <<< "$2"
+  a1=$((10#${a1:-0})); a2=$((10#${a2:-0})); a3=$((10#${a3:-0}))
+  b1=$((10#${b1:-0})); b2=$((10#${b2:-0})); b3=$((10#${b3:-0}))
+  if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ]; return; fi
+  if [ "$a2" -ne "$b2" ]; then [ "$a2" -gt "$b2" ]; return; fi
+  [ "$a3" -gt "$b3" ]
+}
+
+# --- has this VERSION already been released? ---
+git fetch origin --tags -q 2>/dev/null || echo "warning: could not fetch tags from origin; checking local state only." >&2
+
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+  echo "VERSION ($VERSION) is already tagged as $TAG. nothing to do."
+  exit 0
+fi
+
+# --- refuse to publish a release older than what's already out there ---
+if [ "$FORCE" != 1 ]; then
+  highest=""
+  while IFS= read -r t; do
+    t="${t#v}"
+    case "$t" in *[!0-9.]*) continue ;; esac
+    [ -z "$highest" ] && { highest="$t"; continue; }
+    ver_gt "$t" "$highest" && highest="$t"
+  done < <(git tag -l 'v*' | sed 's/^v//')
+  if [ -n "$highest" ] && ! ver_gt "$VERSION" "$highest"; then
+    echo "error: VERSION ($VERSION) is not newer than the highest existing tag (v$highest)." >&2
+    echo "bump VERSION first, or re-run with --force if this is intentional." >&2
+    exit 1
+  fi
+fi
+
+# --- preconditions ---
+branch="$(git symbolic-ref -q --short HEAD)" || {
+  echo "error: detached HEAD; release from a branch." >&2
+  exit 1
+}
+
+dirty_other="$(git status --porcelain -- . ":(exclude)VERSION")"
+if [ -n "$dirty_other" ]; then
+  echo "error: working tree has uncommitted changes besides VERSION; commit or stash them first:" >&2
+  echo "$dirty_other" >&2
+  exit 1
+fi
+
+# --- commit VERSION if it's pending ---
+if ! git diff --quiet -- "$VERSION_FILE" || ! git diff --cached --quiet -- "$VERSION_FILE"; then
+  run git add "$VERSION_FILE"
+  run git commit -m "Release $VERSION"
+fi
+
+# --- tag and push ---
+run git tag -a "$TAG" -m "$TAG"
+run git push origin "$branch"
+run git push origin "$TAG"
+
+if [ "$DRY_RUN" = 1 ]; then
+  echo "(dry run — nothing was committed, tagged, or pushed)"
+else
+  echo "released $TAG."
+  echo "run 'coco --rebuild' to build it locally."
+fi
