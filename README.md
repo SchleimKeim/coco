@@ -1,4 +1,4 @@
-# coco — Coding Container Suite
+# 🥥 coco — Coding Container Suite
 
 A reusable, Docker-based development environment for daily software development:
 
