@@ -75,7 +75,7 @@ A 6-char hash of the full host path is still used for `CONTAINER_NAME` (`coco-<b
 
 ## Coding agents
 
-Not limited to Claude Code. On first run in a project, `coco` prompts you to select which coding agent(s) to enable (0, 1, or more), via a plain numbered checklist (space-separated input, e.g. "1 3 4") — no `whiptail`/`dialog` dependency. Selection is saved to `.coco/config`:
+Not limited to Claude Code. On first run in a project, `coco` prompts you to select which coding agent(s) to enable (0, 1, or more), via an interactive checklist (up/down to move, space to toggle, enter to confirm) — pure bash, no `whiptail`/`dialog`/`fzf` dependency. Falls back to a plain numbered prompt (space-separated input, e.g. "1 3 4") when stdin/stdout aren't a terminal. Selection is saved to `.coco/config`:
 
 ```
 AGENTS=claude,codex,gemini
