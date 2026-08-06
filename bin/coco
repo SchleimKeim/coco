@@ -3,17 +3,66 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE="coco:latest"
 
+# --- version ---
+# missing/malformed VERSION is never fatal: it degrades to exactly the
+# pre-versioning behavior (empty COCO_VERSION, no version tag, no update
+# check, byte-identical build hash).
+COCO_VERSION=""
+if [ -f "$REPO_DIR/VERSION" ]; then
+  COCO_VERSION="$(tr -d ' \t\r\n' < "$REPO_DIR/VERSION" || true)"
+fi
+case "$COCO_VERSION" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) COCO_VERSION="" ;;
+esac
+
+IMAGE_REPO="coco"
+IMAGE="$IMAGE_REPO:latest"
+
+usage() {
+  cat <<EOF
+usage: coco [options]
+
+  --rebuild           force a rebuild of the coco image
+  --config            re-run coding-agent selection for this project
+  --cleanup           remove old and dangling coco images (never the current one)
+  --check-update      check for a new coco release now, ignoring the 24h cache
+  --no-update-check   skip the periodic update check for this run
+  -V, --version       print coco's version and exit
+  -h, --help          show this help and exit
+
+environment:
+  COCO_NO_UPDATE_CHECK=1     same as --no-update-check
+  COCO_UPDATE_REMOTE=<name>  git remote to check for releases (default: origin)
+EOF
+}
+
+ORIG_ARGS=("$@")
 REBUILD=0
 RECONFIGURE=0
+CLEANUP=0
+FORCE_UPDATE_CHECK=0
+SKIP_UPDATE_CHECK="${COCO_NO_UPDATE_CHECK:-0}"
+
 for arg in "$@"; do
   case "$arg" in
     --rebuild) REBUILD=1 ;;
     --config) RECONFIGURE=1 ;;
-    -h|--help)
-      echo "usage: coco [--rebuild] [--config]"
+    --cleanup) CLEANUP=1 ;;
+    --check-update) FORCE_UPDATE_CHECK=1 ;;
+    --no-update-check) SKIP_UPDATE_CHECK=1 ;;
+    -V|--version)
+      echo "coco ${COCO_VERSION:-unknown}"
       exit 0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown option '$arg' (try: coco --help)" >&2
+      exit 2
       ;;
   esac
 done
@@ -25,6 +74,199 @@ ask_yn() {
   [ -z "$reply" ] || [[ "$reply" =~ ^[Yy] ]]
 }
 
+# portable sha256: stock macOS ships `shasum` but not `sha256sum` (that only
+# resolves via MacPorts); stock AlmaLinux/RHEL is the reverse. try shasum
+# first so a MacPorts-free mac never needs it, fall back to sha256sum for
+# linux hosts. both emit the same `<hex>  -` format.
+sha256_hex() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256
+  else
+    sha256sum
+  fi
+}
+
+# ver_gt A B -> true if semver A > B (numeric X.Y.Z only)
+ver_gt() {
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<< "$1"
+  IFS=. read -r b1 b2 b3 <<< "$2"
+  a1=$((10#${a1:-0})); a2=$((10#${a2:-0})); a3=$((10#${a3:-0}))
+  b1=$((10#${b1:-0})); b2=$((10#${b2:-0})); b3=$((10#${b3:-0}))
+  if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ]; return; fi
+  if [ "$a2" -ne "$b2" ]; then [ "$a2" -gt "$b2" ]; return; fi
+  [ "$a3" -gt "$b3" ]
+}
+
+# reads `git ls-remote --tags` output on stdin, prints the highest X.Y.Z tag
+# (accepts v-prefixed or bare, strips the ^{} peeled-annotated-tag suffix,
+# skips pre-release/non-numeric tags). empty input -> empty output.
+latest_remote_version() {
+  local line ref ver best=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    ref="${line#*refs/tags/}"
+    case "$ref" in *"^{}") ref="${ref%"^{}"}" ;; esac
+    case "$ref" in
+      v[0-9]*) ver="${ref#v}" ;;
+      [0-9]*) ver="$ref" ;;
+      *) continue ;;
+    esac
+    case "$ver" in *[!0-9.]*) continue ;; esac
+    if [ -z "$best" ]; then best="$ver"; continue; fi
+    ver_gt "$ver" "$best" && best="$ver"
+  done
+  printf '%s' "$best"
+}
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/coco"
+CACHE_FILE="$CACHE_DIR/update-check"
+
+cache_get() { # cache_get KEY
+  [ -f "$CACHE_FILE" ] || return 1
+  local v
+  v="$(grep -m1 "^$1=" "$CACHE_FILE" 2>/dev/null | cut -d= -f2-)" || return 1
+  [ -n "$v" ] && printf '%s' "$v"
+}
+
+cache_put() { # cache_put NEXT_CHECK LATEST_VERSION
+  mkdir -p "$CACHE_DIR" 2>/dev/null || return 0
+  printf 'NEXT_CHECK=%s\nLATEST_VERSION=%s\n' "$1" "$2" > "$CACHE_FILE.tmp" 2>/dev/null \
+    && mv -f "$CACHE_FILE.tmp" "$CACHE_FILE" 2>/dev/null || true
+}
+
+check_update() {
+  local remote="${COCO_UPDATE_REMOTE:-origin}"
+  local now next latest tmp branch
+
+  # --- silent no-op gates ---
+  [ -n "$COCO_VERSION" ] || return 0
+  [ -t 0 ] && [ -t 1 ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  git -C "$REPO_DIR" remote get-url "$remote" >/dev/null 2>&1 || return 0
+
+  now="$(date +%s)"
+  if [ "$FORCE_UPDATE_CHECK" != 1 ]; then
+    next="$(cache_get NEXT_CHECK || true)"
+    latest="$(cache_get LATEST_VERSION || true)"
+    if [ -n "$next" ] && [ "$now" -lt "$next" ]; then
+      [ -n "$latest" ] || return 0
+    else
+      latest=""
+    fi
+  else
+    latest=""
+  fi
+
+  if [ -z "$latest" ]; then
+    tmp="$CACHE_DIR/ls-remote.$$"
+    mkdir -p "$CACHE_DIR" 2>/dev/null || true
+    if ! GIT_TERMINAL_PROMPT=0 \
+         GIT_SSH_COMMAND="ssh -o ConnectTimeout=5 -o BatchMode=yes" \
+         git -C "$REPO_DIR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=5 \
+             ls-remote --tags "$remote" > "$tmp" 2>/dev/null; then
+      rm -f "$tmp"
+      cache_put "$((now + 3600))" ""
+      [ "$FORCE_UPDATE_CHECK" = 1 ] && echo "update check: could not reach '$remote'." >&2
+      return 0
+    fi
+    latest="$(latest_remote_version < "$tmp")"
+    rm -f "$tmp"
+    cache_put "$((now + 86400))" "$latest"
+  fi
+
+  if [ -z "$latest" ]; then
+    [ "$FORCE_UPDATE_CHECK" = 1 ] && echo "coco $COCO_VERSION (no releases published yet)"
+    return 0
+  fi
+  if ! ver_gt "$latest" "$COCO_VERSION"; then
+    [ "$FORCE_UPDATE_CHECK" = 1 ] && echo "coco $COCO_VERSION is up to date."
+    return 0
+  fi
+
+  echo "a newer coco is available: $COCO_VERSION -> $latest"
+  ask_yn "update now (git pull + rebuild image)?" || return 0
+
+  if ! branch="$(git -C "$REPO_DIR" symbolic-ref -q --short HEAD)"; then
+    echo "coco's checkout is on a detached HEAD; update manually in $REPO_DIR." >&2
+    return 0
+  fi
+  if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
+    echo "coco's checkout has uncommitted changes; update manually in $REPO_DIR." >&2
+    return 0
+  fi
+  if ! git -C "$REPO_DIR" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    echo "branch '$branch' has no upstream; update manually in $REPO_DIR." >&2
+    return 0
+  fi
+  if ! git -C "$REPO_DIR" pull --ff-only; then
+    echo "git pull --ff-only failed (diverged history?); update manually in $REPO_DIR." >&2
+    return 0
+  fi
+
+  # bin/coco was just rewritten under this running shell (bash reads scripts
+  # incrementally by byte offset, so continuing here could execute garbage
+  # from the middle of the new file) -> must restart from byte 0.
+  echo "updated. restarting coco..."
+  export COCO_SKIP_UPDATE_CHECK=1
+  exec "$REPO_DIR/bin/coco" "${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}"
+}
+
+do_cleanup() {
+  local keep_latest keep_version id tag size ago
+  local -a targets=() labels=()
+
+  keep_latest="$(docker inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
+  keep_version=""
+  if [ -n "$COCO_VERSION" ]; then
+    keep_version="$(docker inspect --format '{{.Id}}' "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true)"
+  fi
+
+  # (A) dangling coco layers, identified by the coco.hash label -- a
+  # dangling image has no repository, so name-based identification is
+  # impossible; the label is the only correct discriminator.
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    targets+=("$id")
+    labels+=("<none>  $id")
+  done < <(docker images -f dangling=true -f label=coco.hash --format '{{.ID}}')
+
+  # (B) versioned coco tags older than the current VERSION. the "coco:"
+  # prefix (with the colon) in the reference filter is load-bearing: a bare
+  # prefix glob like "co*" would also match unrelated repos named "coco...".
+  while IFS='|' read -r tag id size ago; do
+    [ -n "$tag" ] || continue
+    [ "$tag" = "latest" ] && continue
+    [ -n "$COCO_VERSION" ] || continue
+    [ "$tag" = "$COCO_VERSION" ] && continue
+    case "$tag" in *[!0-9.]*) continue ;; esac
+    ver_gt "$COCO_VERSION" "$tag" || continue
+    [ "$id" = "$keep_latest" ] && continue
+    [ "$id" = "$keep_version" ] && continue
+    targets+=("$IMAGE_REPO:$tag")
+    labels+=("$IMAGE_REPO:$tag  $id  $size  $ago")
+  done < <(docker images -f "reference=$IMAGE_REPO:*" --format '{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedSince}}')
+
+  if [ "${#targets[@]}" -eq 0 ]; then
+    echo "nothing to clean up. current: $IMAGE${COCO_VERSION:+ ($IMAGE_REPO:$COCO_VERSION)}"
+    return 0
+  fi
+
+  echo "the following coco images will be removed:"
+  printf '  %s\n' "${labels[@]}"
+  echo "keeping: $IMAGE${COCO_VERSION:+, $IMAGE_REPO:$COCO_VERSION}"
+  ask_yn "remove ${#targets[@]} image(s)?" || { echo "aborted."; return 0; }
+
+  local failed=0
+  for t in "${targets[@]}"; do
+    docker rmi "$t" >/dev/null 2>&1 || { echo "  skipped $t (in use by a container)"; failed=1; }
+  done
+  [ "$failed" = 1 ] && echo "some images are still referenced by containers; run 'docker ps -a' to inspect."
+  echo "note: this only removes coco images. for reclaiming build cache, see: docker builder prune"
+  return 0
+}
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "error: docker not found on PATH. install docker (or a compatible CLI, e.g. podman aliased to docker) and try again." >&2
   exit 1
@@ -33,6 +275,14 @@ fi
 if ! docker info >/dev/null 2>&1; then
   echo "error: docker daemon not reachable. is docker running?" >&2
   exit 1
+fi
+
+# handled before any .coco/ dir creation below: --cleanup is not tied to a
+# project, and must not litter a stray .coco/ in whatever directory it's
+# run from.
+if [ "$CLEANUP" = 1 ]; then
+  do_cleanup
+  exit 0
 fi
 
 PROJECT_DIR="$(pwd)"
@@ -64,6 +314,25 @@ if ! command -v coco >/dev/null 2>&1; then
     echo "export PATH=\"$SCRIPT_DIR:\$PATH\"" >> "$HOME/.bashrc"
     echo "added. run: source ~/.bashrc"
   fi
+fi
+
+# --- update check ---
+# grouped with the other first-run interactive prompts above (after the
+# docker preflight -- no point offering an update when docker is broken;
+# before agent selection below, and before the build gate further down, so
+# a git pull here is picked up by that gate's hash on the re-exec).
+if [ "$SKIP_UPDATE_CHECK" != 1 ]; then
+  check_update
+fi
+
+# --check-update is a standalone query ("is there a new coco?"), like
+# --cleanup: if an update was actually applied, check_update already
+# exec'd into the freshly-pulled coco and never returns here. otherwise
+# (declined, already current, or no-op'd) stop after reporting -- don't
+# fall through into agent selection / build / run just because the user
+# asked a question.
+if [ "$FORCE_UPDATE_CHECK" = 1 ]; then
+  exit 0
 fi
 
 # --- agent selection ---
@@ -162,7 +431,7 @@ done
 # runs are filesystem-isolated from each other, so two different host
 # projects sharing a basename can't collide on this path. the hash still
 # disambiguates CONTAINER_NAME, since docker requires that to be unique.
-PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256sum | cut -c1-6)"
+PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256_hex | cut -c1-6)"
 BASENAME="$(basename "$PROJECT_DIR")"
 SLUG="${BASENAME}-${PROJECT_HASH}"
 MOUNT_PATH="/code/$BASENAME"
@@ -173,22 +442,39 @@ BUILD_UID="${UID:-$(id -u)}"
 BUILD_GID="${GID:-$(id -g)}"
 BUILD_TZ="${TZ:-UTC}"
 
-HASH_INPUT="$(cat "$REPO_DIR/Dockerfile" "$REPO_DIR/container/entrypoint.sh" "$REPO_DIR/container/bashrc.coco" "$REPO_DIR/container/vimrc")$BUILD_UID$BUILD_GID$BUILD_TZ$HOME"
-BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256sum | cut -c1-16)"
+# COCO_VERSION is folded into the hash rather than being a second gate
+# condition: a version bump is by definition a different artifact, so it
+# should force a rebuild the same way any other content change does. this
+# keeps the rebuild predicate a single condition instead of a compound
+# "hash changed OR version changed".
+HASH_INPUT="$(cat "$REPO_DIR/Dockerfile" "$REPO_DIR/container/entrypoint.sh" "$REPO_DIR/container/bashrc.coco" "$REPO_DIR/container/vimrc")$BUILD_UID$BUILD_GID$BUILD_TZ$HOME$COCO_VERSION"
+BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256_hex | cut -c1-16)"
 
 CURRENT_HASH="$(docker inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
 
+BUILD_TAGS=(-t "$IMAGE")
+[ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
+
 if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
-  echo "building $IMAGE (hash changed or --rebuild requested)..."
+  echo "building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
   docker build \
     --build-arg UID="$BUILD_UID" \
     --build-arg GID="$BUILD_GID" \
     --build-arg TZ="$BUILD_TZ" \
     --build-arg HOME="$HOME" \
     --label coco.hash="$BUILD_HASH" \
-    -t "$IMAGE" \
+    --label coco.version="${COCO_VERSION:-}" \
+    "${BUILD_TAGS[@]}" \
     -f "$REPO_DIR/Dockerfile" \
     "$REPO_DIR"
+fi
+
+# idempotent and instant: guarantees the coco:$COCO_VERSION alias exists
+# even when no build ran (e.g. it was manually deleted while coco:latest
+# still matches the hash -- re-tagging is free, forcing a rebuild for pure
+# bookkeeping would not be).
+if [ -n "$COCO_VERSION" ]; then
+  docker tag "$IMAGE" "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true
 fi
 
 # --- run ---
