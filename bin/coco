@@ -369,7 +369,9 @@ agent_mounts() {
   esac
 }
 
-select_agents() {
+# numbered-input fallback: used whenever a raw-mode checklist can't run
+# (not a tty, e.g. scripted/piped invocations).
+select_agents_plain() {
   echo "select coding agent(s) to enable for this project:"
   local i=1
   for a in "${AGENT_NAMES[@]}"; do
@@ -386,6 +388,71 @@ select_agents() {
     if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#AGENT_NAMES[@]}" ]; then
       chosen+=("${AGENT_NAMES[$idx]}")
     fi
+  done
+  local IFS=,
+  echo "AGENTS=${chosen[*]+"${chosen[*]}"}" > "$CONFIG_FILE"
+}
+
+# interactive checklist: up/down move, space toggle, enter confirm. pure
+# bash raw-mode read + ANSI redraw -- no whiptail/dialog/fzf dependency.
+select_agents() {
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    select_agents_plain
+    return $?
+  fi
+
+  local n=${#AGENT_NAMES[@]}
+  local -a picked=()
+  local i cursor=0 key rest
+  for ((i = 0; i < n; i++)); do picked[i]=0; done
+
+  local old_stty
+  if ! old_stty="$(stty -g 2>/dev/null)"; then
+    select_agents_plain
+    return $?
+  fi
+  stty -echo -icanon min 1 time 0
+  # not `trap ... RETURN`: that fires on every shell-function return, including
+  # draw()'s, which would restore the terminal mid-selection. INT/TERM only,
+  # explicitly cleared right after the loop below.
+  trap 'stty "$old_stty" 2>/dev/null; exit 130' INT TERM
+
+  draw() {
+    local j mark prefix
+    for ((j = 0; j < n; j++)); do
+      mark=" "; [ "${picked[j]}" = 1 ] && mark="x"
+      prefix="  "; [ "$j" -eq "$cursor" ] && prefix="> "
+      printf "\033[2K%s[%s] %s\n" "$prefix" "$mark" "${AGENT_NAMES[j]}"
+    done
+  }
+
+  echo "select coding agent(s) to enable for this project:"
+  echo "(up/down move, space toggle, enter confirm)"
+  draw
+  while true; do
+    IFS= read -rsn1 key
+    if [ "$key" = $'\x1b' ]; then
+      # -t takes whole seconds only: macOS's stock bash (3.2) rejects a
+      # fractional timeout ("invalid timeout specification"). 1s is still
+      # well above the sub-millisecond gap between an arrow key's bytes.
+      IFS= read -rsn2 -t 1 rest || rest=""
+      key="$key$rest"
+    fi
+    case "$key" in
+      $'\x1b[A') cursor=$(( (cursor - 1 + n) % n )) ;;
+      $'\x1b[B') cursor=$(( (cursor + 1) % n )) ;;
+      ' ') picked[cursor]=$(( 1 - picked[cursor] )) ;;
+      ''|$'\r'|$'\n') break ;;
+    esac
+    printf "\033[%dA" "$n"
+    draw
+  done
+  stty "$old_stty" 2>/dev/null
+  trap - INT TERM
+
+  local chosen=()
+  for ((i = 0; i < n; i++)); do
+    [ "${picked[i]}" = 1 ] && chosen+=("${AGENT_NAMES[i]}")
   done
   local IFS=,
   echo "AGENTS=${chosen[*]+"${chosen[*]}"}" > "$CONFIG_FILE"
