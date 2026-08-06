@@ -19,15 +19,16 @@ A Docker container is built (once, then cached), started with `pwd` bind-mounted
 
 ```bash
 git clone <this repo> ~/coco
+~/coco/bin/coco --install
 ```
 
-On first run, if `coco` isn't already on `PATH`, it prompts to append to `~/.bashrc`:
+`--install` appends `~/coco/bin` to `PATH` in `~/.bashrc` (non-interactive, safe to re-run) and exits:
 
 ```bash
 echo 'export PATH="...:$PATH"' >> ~/.bashrc
 ```
 
-Only after confirmation.
+Alternatively, just run `coco` (via its full path) once — on first run, if it isn't already on `PATH`, it prompts to append the same line, only after confirmation.
 
 ## Requirements
 
@@ -38,6 +39,7 @@ Docker (or a compatible CLI, e.g. Podman aliased to `docker`), reachable and run
 ```
 usage: coco [options]
 
+  --install           add coco's dir to PATH in ~/.bashrc and exit
   --rebuild           force a rebuild of the coco image
   --config            re-run coding-agent selection for this project
   --cleanup           remove old and dangling coco images (never the current one)
