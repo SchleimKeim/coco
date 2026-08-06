@@ -104,7 +104,7 @@ RUN echo 'source /etc/vimrc.local' >> /etc/vimrc
 
 # --- entrypoint ---
 COPY container/entrypoint.sh /usr/local/bin/coco-entrypoint.sh
-RUN chmod +x /usr/local/bin/coco-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/coco-entrypoint.sh
 
 LABEL coco.hash=""
 LABEL coco.version=""
