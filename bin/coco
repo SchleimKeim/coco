@@ -20,6 +20,27 @@ esac
 IMAGE_REPO="coco"
 IMAGE="$IMAGE_REPO:latest"
 
+# --- container runtime: docker, or podman via its docker-CLI symlink ---
+# podman-docker installs /usr/bin/docker as a symlink to the podman binary;
+# podman notices its own argv[0] is "docker" and prints an "Emulate Docker
+# CLI..." notice on every invocation before proceeding. Resolving the
+# symlink ourselves (pure filesystem check, no process spawned, no notice)
+# lets us call `podman` directly instead. Real docker installs (symlink
+# resolves to an actual docker binary, or docker isn't a symlink at all)
+# are unaffected; if docker is missing entirely but podman is present
+# (no podman-docker compat shim installed), podman is used directly too.
+RUNTIME_BIN=""
+if command -v docker >/dev/null 2>&1; then
+  RUNTIME_BIN="docker"
+  DOCKER_REAL_PATH="$(readlink -f "$(command -v docker)" 2>/dev/null || command -v docker)"
+  if [ "$(basename "$DOCKER_REAL_PATH")" = "podman" ] && command -v podman >/dev/null 2>&1; then
+    RUNTIME_BIN="podman"
+  fi
+elif command -v podman >/dev/null 2>&1; then
+  RUNTIME_BIN="podman"
+fi
+RUNTIME_BIN="${RUNTIME_BIN:-docker}"
+
 usage() {
   cat <<EOF
 usage: coco [options]
@@ -72,9 +93,15 @@ done
 
 ask_yn() {
   local prompt="$1"
-  local reply
-  read -r -p "$prompt [Y/n] " reply || return 1
-  [ -z "$reply" ] || [[ "$reply" =~ ^[Yy] ]]
+  local default="${2:-y}"
+  local reply hint
+  [ "$default" = "n" ] && hint="[y/N]" || hint="[Y/n]"
+  read -r -p "$prompt $hint " reply || return 1
+  if [ -z "$reply" ]; then
+    [ "$default" = "y" ]
+  else
+    [[ "$reply" =~ ^[Yy] ]]
+  fi
 }
 
 # portable sha256: stock macOS ships `shasum` but not `sha256sum` (that only
@@ -188,8 +215,8 @@ check_update() {
     return 0
   fi
 
-  echo "a newer coco is available: $COCO_VERSION -> $latest"
-  ask_yn "update now (git pull + rebuild image)?" || return 0
+  echo "A newer coco is available: $COCO_VERSION -> $latest"
+  ask_yn "Update now (git pull + rebuild image)?" || return 0
 
   if ! branch="$(git -C "$REPO_DIR" symbolic-ref -q --short HEAD)"; then
     echo "coco's checkout is on a detached HEAD; update manually in $REPO_DIR." >&2
@@ -212,7 +239,7 @@ check_update() {
   # bin/coco was just rewritten under this running shell (bash reads scripts
   # incrementally by byte offset, so continuing here could execute garbage
   # from the middle of the new file) -> must restart from byte 0.
-  echo "updated. restarting coco..."
+  echo "Updated. Restarting coco..."
   export COCO_NO_UPDATE_CHECK=1
   exec "$REPO_DIR/bin/coco" "${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}"
 }
@@ -221,10 +248,10 @@ do_cleanup() {
   local keep_latest keep_version id tag size ago
   local -a targets=() labels=()
 
-  keep_latest="$(docker inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
+  keep_latest="$("$RUNTIME_BIN" inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
   keep_version=""
   if [ -n "$COCO_VERSION" ]; then
-    keep_version="$(docker inspect --format '{{.Id}}' "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true)"
+    keep_version="$("$RUNTIME_BIN" inspect --format '{{.Id}}' "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true)"
   fi
 
   # (A) dangling coco layers, identified by the coco.hash label -- a
@@ -234,7 +261,7 @@ do_cleanup() {
     [ -n "$id" ] || continue
     targets+=("$id")
     labels+=("<none>  $id")
-  done < <(docker images -f dangling=true -f label=coco.hash --format '{{.ID}}')
+  done < <("$RUNTIME_BIN" images -f dangling=true -f label=coco.hash --format '{{.ID}}')
 
   # (B) versioned coco tags older than the current VERSION. the "coco:"
   # prefix (with the colon) in the reference filter is load-bearing: a bare
@@ -250,23 +277,23 @@ do_cleanup() {
     [ "$id" = "$keep_version" ] && continue
     targets+=("$IMAGE_REPO:$tag")
     labels+=("$IMAGE_REPO:$tag  $id  $size  $ago")
-  done < <(docker images -f "reference=$IMAGE_REPO:*" --format '{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedSince}}')
+  done < <("$RUNTIME_BIN" images -f "reference=$IMAGE_REPO:*" --format '{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedSince}}')
 
   if [ "${#targets[@]}" -eq 0 ]; then
     echo "nothing to clean up. current: $IMAGE${COCO_VERSION:+ ($IMAGE_REPO:$COCO_VERSION)}"
     return 0
   fi
 
-  echo "the following coco images will be removed:"
+  echo "The following coco images will be removed:"
   printf '  %s\n' "${labels[@]}"
-  echo "keeping: $IMAGE${COCO_VERSION:+, $IMAGE_REPO:$COCO_VERSION}"
-  ask_yn "remove ${#targets[@]} image(s)?" || { echo "aborted."; return 0; }
+  echo "Keeping: $IMAGE${COCO_VERSION:+, $IMAGE_REPO:$COCO_VERSION}"
+  ask_yn "Remove ${#targets[@]} image(s)?" || { echo "Aborted."; return 0; }
 
   local failed=0
   for t in "${targets[@]}"; do
-    docker rmi "$t" >/dev/null 2>&1 || { echo "  skipped $t (in use by a container)"; failed=1; }
+    "$RUNTIME_BIN" rmi "$t" >/dev/null 2>&1 || { echo "  skipped $t (in use by a container)"; failed=1; }
   done
-  [ "$failed" = 1 ] && echo "some images are still referenced by containers; run 'docker ps -a' to inspect."
+  [ "$failed" = 1 ] && echo "Some images are still referenced by containers; run '$RUNTIME_BIN ps -a' to inspect."
   echo "note: this only removes coco images. for reclaiming build cache, see: docker builder prune"
   return 0
 }
@@ -286,13 +313,13 @@ if [ "$INSTALL" = 1 ]; then
   exit 0
 fi
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "error: docker not found on PATH. install docker (or a compatible CLI, e.g. podman aliased to docker) and try again." >&2
+if [ "$RUNTIME_BIN" = "docker" ] && ! command -v docker >/dev/null 2>&1; then
+  echo "error: docker not found on PATH. install docker (or a compatible CLI, e.g. podman) and try again." >&2
   exit 1
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  echo "error: docker daemon not reachable. is docker running?" >&2
+if ! "$RUNTIME_BIN" info >/dev/null 2>&1; then
+  echo "error: $RUNTIME_BIN daemon not reachable. is it running?" >&2
   exit 1
 fi
 
@@ -300,12 +327,20 @@ fi
 # in-container coco user (built with the host UID, see BUILD_UID below)
 # does not actually map 1:1 to the host user -- bind-mounted project/cache
 # dirs come up owned by an unrelated UID and are unreadable. --userns=keep-id
-# is podman-only (real docker never remaps UIDs like this) and only applies
-# rootless (rootful podman doesn't remap either).
+# fixes that, but is podman-only (real docker never remaps UIDs like this)
+# and only applies rootless (rootful podman doesn't remap either); gating
+# on RUNTIME_BIN itself (already resolved above) avoids re-probing via
+# `--version`/grep for this.
 RUN_USERNS_ARGS=()
-if docker --version 2>&1 | grep -qi podman \
-   && [ "$(docker info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = "true" ]; then
-  RUN_USERNS_ARGS+=(--userns=keep-id)
+if [ "$RUNTIME_BIN" = "podman" ]; then
+  # real docker would fail this --format template (no .Host.Security.Rootless
+  # field); harmless here since we only run it for podman. `|| true` since
+  # this is a plain assignment, not inside if/&& -- set -e would otherwise
+  # end the script on any unexpected non-zero here.
+  PODMAN_ROOTLESS="$("$RUNTIME_BIN" info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || true
+  if [ "$PODMAN_ROOTLESS" = "true" ]; then
+    RUN_USERNS_ARGS+=(--userns=keep-id)
+  fi
 fi
 
 # handled before any .coco/ dir creation below: --cleanup is not tied to a
@@ -319,8 +354,9 @@ fi
 PROJECT_DIR="$(pwd)"
 
 if [ "$PROJECT_DIR" = "$HOME" ]; then
-  echo "WARNING: you are about to run coco in \$HOME ($HOME). This will mount your entire home directory into the container."
-  ask_yn "continue anyway?" || exit 1
+  echo "WARNING: you are about to run coco in \$HOME ($HOME)."
+  echo "This will mount your entire home directory into the container."
+  ask_yn "Continue anyway?" n || exit 1
 fi
 
 # --- .coco project data dir ---
@@ -333,7 +369,7 @@ CONFIG_FILE="$COCO_DIR/config"
 if [ -d "$PROJECT_DIR/.git" ]; then
   GITIGNORE="$PROJECT_DIR/.gitignore"
   if [ ! -f "$GITIGNORE" ] || ! grep -qxF ".coco/" "$GITIGNORE" 2>/dev/null; then
-    if ask_yn "add .coco/ to .gitignore?"; then
+    if ask_yn "Add .coco/ to .gitignore?"; then
       echo ".coco/" >> "$GITIGNORE"
     fi
   fi
@@ -341,7 +377,7 @@ fi
 
 # --- PATH check ---
 if ! command -v coco >/dev/null 2>&1; then
-  if ask_yn "coco is not on your PATH. add it to ~/.bashrc?"; then
+  if ask_yn "coco is not on your PATH. Add it to ~/.bashrc?"; then
     echo "export PATH=\"$SCRIPT_DIR:\$PATH\"" >> "$HOME/.bashrc"
     echo "added. run: source ~/.bashrc"
   fi
@@ -402,14 +438,14 @@ agent_mounts() {
 # numbered-input fallback: used whenever a raw-mode checklist can't run
 # (not a tty, e.g. scripted/piped invocations).
 select_agents_plain() {
-  echo "select coding agent(s) to enable for this project:"
+  echo "Select coding agent(s) to enable for this project:"
   local i=1
   for a in "${AGENT_NAMES[@]}"; do
     echo "  $i) $a"
     i=$((i + 1))
   done
-  if ! read -r -p "enter numbers separated by spaces (blank for none): " selection; then
-    echo "no input available, skipping agent selection (will ask again next run)."
+  if ! read -r -p "Enter numbers separated by spaces (blank for none): " selection; then
+    echo "No input available, skipping agent selection (will ask again next run)."
     return 1
   fi
   local chosen=()
@@ -456,7 +492,7 @@ select_agents() {
     done
   }
 
-  echo "select coding agent(s) to enable for this project:"
+  echo "Select coding agent(s) to enable for this project:"
   echo "(up/down move, space toggle, enter confirm)"
   draw
   while true; do
@@ -507,7 +543,7 @@ for agent in "${SELECTED[@]+"${SELECTED[@]}"}"; do
     host_path="${pair%%:*}"
     container_path="${pair##*:}"
     if [ ! -e "$host_path" ]; then
-      if ask_yn "create $host_path for $agent?"; then
+      if ask_yn "Create $host_path for $agent?"; then
         if [[ "$host_path" == *.json ]]; then
           echo '{}' > "$host_path"
         else
@@ -550,14 +586,14 @@ BUILD_TZ="${TZ:-UTC}"
 HASH_INPUT="$(cat "$REPO_DIR/Dockerfile" "$REPO_DIR/container/entrypoint.sh" "$REPO_DIR/container/bashrc.coco" "$REPO_DIR/container/vimrc")$BUILD_UID$BUILD_GID$BUILD_TZ$HOME$COCO_VERSION"
 BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256_hex | cut -c1-16)"
 
-CURRENT_HASH="$(docker inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
+CURRENT_HASH="$("$RUNTIME_BIN" inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
 
 BUILD_TAGS=(-t "$IMAGE")
 [ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
 
 if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
-  echo "building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
-  docker build \
+  echo "Building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
+  "$RUNTIME_BIN" build \
     --build-arg UID="$BUILD_UID" \
     --build-arg GID="$BUILD_GID" \
     --build-arg TZ="$BUILD_TZ" \
@@ -574,11 +610,11 @@ fi
 # still matches the hash -- re-tagging is free, forcing a rebuild for pure
 # bookkeeping would not be).
 if [ -n "$COCO_VERSION" ]; then
-  docker tag "$IMAGE" "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true
+  "$RUNTIME_BIN" tag "$IMAGE" "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true
 fi
 
 # --- run ---
-exec docker run --rm -it \
+exec "$RUNTIME_BIN" run --rm -it \
   --name "$CONTAINER_NAME" \
   "${RUN_USERNS_ARGS[@]+"${RUN_USERNS_ARGS[@]}"}" \
   -e TZ="$BUILD_TZ" \
