@@ -210,7 +210,7 @@ check_update() {
   # incrementally by byte offset, so continuing here could execute garbage
   # from the middle of the new file) -> must restart from byte 0.
   echo "updated. restarting coco..."
-  export COCO_SKIP_UPDATE_CHECK=1
+  export COCO_NO_UPDATE_CHECK=1
   exec "$REPO_DIR/bin/coco" "${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}"
 }
 
