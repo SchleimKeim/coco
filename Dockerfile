@@ -82,8 +82,13 @@ ARG HOME=/home/coco
 # plugin marketplace install locations) stay valid. building the coco
 # native binary (below) under that same path keeps `claude install` from
 # needing to run again at every container start.
+#
+# -M (no skel copy), not -m: /etc/skel's ~/.bash_profile -> ~/.bashrc ->
+# /etc/bashrc chain would run after /etc/profile.d/coco-bashrc.sh on
+# login shells and clobber its PS1 with the stock [user@host dir]$ one.
 RUN (getent group "${GID}" >/dev/null || groupadd -g "${GID}" coco) \
- && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -m -s /bin/bash -d "${HOME}" coco) \
+ && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
+ && mkdir -p "${HOME}" && chown "${UID}:${GID}" "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
  && chmod 0440 /etc/sudoers.d/coco
 
