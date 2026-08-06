@@ -7,7 +7,7 @@ parse_git_branch() {
 }
 
 if [ -n "$PS1" ]; then
-  export PS1='\[\e[32m\]\u@\h\[\e[0m\]:\[\e[34m\]\w\[\e[33m\]$(b=$(parse_git_branch); [ -n "$b" ] && echo " ($b)")\[\e[0m\]\$ '
+  export PS1='\[\e[32m\]\u@🥥\[\e[0m\]:\[\e[34m\]\w\[\e[33m\]$(b=$(parse_git_branch); [ -n "$b" ] && echo " ($b)")\[\e[0m\]\$ '
 fi
 
 export HISTFILE=~/.bash_history
