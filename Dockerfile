@@ -1,10 +1,21 @@
-FROM almalinux:9
+FROM almalinux:10
 
 ARG UID=1000
 ARG GID=1000
 ARG TZ=UTC
 
 # --- base packages ---
+# AlmaLinux 10 (RHEL 10) dropped dnf modularity for its own AppStream
+# packages ("No matching Modules to list") -- nodejs is now a single plain
+# package (currently 22.x), no `dnf module enable` needed or available.
+#
+# python3.14: installed alongside the system python3 (3.12), not in place
+# of it. /usr/bin/python3 is RPM-owned and dnf's own shebang is
+# `#!/usr/bin/python3` -- repointing that symlink would run dnf under an
+# interpreter its compiled C-extension modules (python3-libdnf5 etc.)
+# aren't built against, breaking dnf itself. python3.14 gets made the
+# *user-facing* default instead, via /usr/local/bin symlinks that win on
+# PATH ahead of /usr/bin without touching the system binary (see below).
 RUN dnf install -y epel-release \
  && dnf config-manager --set-enabled crb \
  && dnf install -y --allowerasing \
@@ -12,23 +23,37 @@ RUN dnf install -y epel-release \
     screen htop strace lsof procps-ng \
     mariadb sqlite \
     python3 python3-pip python3-virtualenv \
-    php-cli php-ldap php-mysqlnd php-pecl-xdebug php-xml php-mbstring \
+    python3.14 python3.14-pip \
     openldap-clients \
     bash-completion sudo shadow-utils tzdata \
- && dnf clean all
+ && dnf clean all \
+ && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
+ && ln -sf /usr/bin/python3.14 /usr/local/bin/python \
+ && ln -sf /usr/bin/pip3.14 /usr/local/bin/pip3 \
+ && ln -sf /usr/bin/pip3.14 /usr/local/bin/pip
 
 ENV TZ=${TZ}
+
+# --- PHP 8.5 (Remi) --- (AlmaLinux 10's own AppStream PHP is 8.3; Remi
+# still publishes its own module stream even though RHEL 10 dropped
+# modularity for its own packages, so `dnf module enable` still works here).
+# must come before composer below, which invokes `php`.
+RUN dnf install -y https://rpms.remirepo.net/enterprise/remi-release-10.rpm \
+ && dnf module enable -y php:remi-8.5 \
+ && dnf install -y --allowerasing \
+    php-cli php-ldap php-mysqlnd php-pecl-xdebug php-xml php-mbstring \
+ && dnf clean all
 
 # --- composer ---
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-# --- phpunit --- (pinned to 9.6, the last major compatible with AlmaLinux 9's PHP 8.0)
-RUN curl -sSL https://phar.phpunit.de/phpunit-9.6.phar -o /usr/local/bin/phpunit \
+# --- phpunit --- (pinned to major 12, the current stable line -- requires
+# PHP >=8.3, verified running clean under Remi's PHP 8.5 above)
+RUN curl -sSL https://phar.phpunit.de/phpunit-12.phar -o /usr/local/bin/phpunit \
  && chmod +x /usr/local/bin/phpunit
 
 # --- node (needed by most coding agent CLIs) ---
-RUN dnf module enable -y nodejs:20 \
- && dnf install -y nodejs \
+RUN dnf install -y nodejs \
  && dnf clean all
 
 # --- bun (needed by the claude-mem plugin's hook worker) ---

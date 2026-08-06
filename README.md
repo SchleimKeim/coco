@@ -3,7 +3,7 @@
 A reusable, Docker-based development environment for daily software development:
 
 * terminal-first (vim, git, coding agents, python, pip, php, composer, npm, ...)
-* close to the production environment (AlmaLinux 9)
+* close to the production environment (AlmaLinux 10)
 * easy to maintain and extend
 
 `coco` is a generic development workstation, not tied to any specific project. Run it in any project directory:
@@ -53,12 +53,14 @@ environment:
 
 ## Base image
 
-AlmaLinux 9.
+AlmaLinux 10.
 
 ## Container tools
 
-git vim less curl wget jq rsync unzip zip tar make gcc which screen htop strace lsof mysql sqlite3 python3 pip3 venv php-cli php-ldap php-mysqlnd php-xdebug phpunit composer ldapsearch
+git vim less curl wget jq rsync unzip zip tar make gcc which screen htop strace lsof mysql sqlite3 python3.14 pip3.14 venv php-cli php-ldap php-mysqlnd php-xdebug phpunit composer ldapsearch
 
+* **python**: 3.14 is the default (`python`/`python3`/`pip`/`pip3` all resolve to it via `/usr/local/bin`, which wins on `PATH`). The OS's own python3 (3.12) is left untouched at `/usr/bin/python3` — `dnf` itself depends on that exact binary, so it's never repointed.
+* **php**: 8.5, from the [Remi repo](https://rpms.remirepo.net/) — AlmaLinux 10's own AppStream PHP is 8.3. `phpunit` is pinned to major 12, the current line supporting PHP ≥8.3.
 * **xdebug**: installed but disabled by default (`xdebug.mode=off`). Enable per-run via `XDEBUG_ENABLE=1` env var, entrypoint flips the ini setting before launching the shell.
 
 ## User
