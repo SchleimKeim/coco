@@ -67,11 +67,11 @@ A normal user (`coco`), with passwordless sudo. UID/GID are auto-detected from t
 
 ## Mount path
 
-The project is mounted at `/code/<basename>` (bare basename of the project dir), not a fixed `/code`. This avoids Claude Code / other agents' trust-list falsely treating different projects as "the same" trusted path (since the mounted path would otherwise always be identical).
+The project is mounted at the *same absolute path inside the container as on the host* (e.g. `/Users/alice/work/foo`), not a fixed `/code` or a basename-derived path. This is the same reasoning as `$HOME` above (see Coding agents): any tool that caches an absolute in-container path — claude-mem keys its memory store by `basename(git rev-parse --show-toplevel)`, `.git` worktree configs, LSP caches — stays valid on both sides of the mount this way, and a matching path can't drift out of sync the way a derived one could.
 
-The basename is deliberately *not* hash-suffixed on the mount path itself: the claude-mem plugin keys its memory store by `basename(git rev-parse --show-toplevel)`, so a hash-suffixed in-container path would give the same project a different memory bucket inside the container than on the host, breaking continuity between host and container sessions. Two different host projects sharing a basename can't collide on this path anyway, since each container run is filesystem-isolated.
+Host paths are inherently unique, which also solves Claude Code / other agents' trust-list falsely treating different projects as "the same" trusted path — no basename or hash needed on the mount path itself for that.
 
-The 6-char hash of the full host path is still used to disambiguate `CONTAINER_NAME` (`coco-<basename>-<hash6>`), since Docker requires container names to be unique and two projects can share a basename.
+A 6-char hash of the full host path is still used for `CONTAINER_NAME` (`coco-<basename>-<hash6>`), since Docker requires container names to be unique and doesn't accept arbitrary path characters in one.
 
 ## Coding agents
 

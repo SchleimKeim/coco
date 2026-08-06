@@ -425,17 +425,19 @@ for agent in "${SELECTED[@]+"${SELECTED[@]}"}"; do
 done
 
 # --- per-project mount path / container name ---
-# mount path keeps the bare basename (not hash-suffixed): claude-mem keys
-# its memory store by `basename(git rev-parse --show-toplevel)`, so the
-# in-container repo path must resolve to the same basename as on the host
-# for memory continuity between host and container sessions. container
-# runs are filesystem-isolated from each other, so two different host
-# projects sharing a basename can't collide on this path. the hash still
-# disambiguates CONTAINER_NAME, since docker requires that to be unique.
+# mount path matches the host path exactly (not /code/<basename>): the
+# same reasoning as $HOME above (see agent_mounts()) -- any tool that
+# caches an absolute in-container path (claude-mem keys its memory store
+# by basename(git rev-parse --show-toplevel), git worktree configs, LSP
+# caches, ...) stays valid on both sides of the mount this way. host paths
+# are inherently unique, so this is also strictly better than a hashed
+# basename for keeping per-project trust-list prompts distinct. the hash
+# still disambiguates CONTAINER_NAME, since docker requires that to be
+# unique and PROJECT_DIR isn't a legal container-name character set.
 PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256_hex | cut -c1-6)"
 BASENAME="$(basename "$PROJECT_DIR")"
 SLUG="${BASENAME}-${PROJECT_HASH}"
-MOUNT_PATH="/code/$BASENAME"
+MOUNT_PATH="$PROJECT_DIR"
 CONTAINER_NAME="coco-$SLUG"
 
 # --- build image if needed ---
