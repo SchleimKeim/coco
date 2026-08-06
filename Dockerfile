@@ -105,7 +105,8 @@ USER root
 # --- shell / vim defaults ---
 COPY container/bashrc.coco /etc/profile.d/coco-bashrc.sh
 COPY container/vimrc /etc/vimrc.local
-RUN echo 'source /etc/vimrc.local' >> /etc/vimrc
+RUN chmod 0644 /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
+ && echo 'source /etc/vimrc.local' >> /etc/vimrc
 
 # --- entrypoint ---
 COPY container/entrypoint.sh /usr/local/bin/coco-entrypoint.sh
