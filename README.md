@@ -135,6 +135,19 @@ The check silently no-ops (no output, no prompt) when: `coco` has no `VERSION`; 
 
 `coco --cleanup` removes old coco images: dangling (`<none>`) layers left behind by prior builds (identified via the `coco.hash` label, since dangling images have no repository to match by name) and any `coco:<version>` tag older than the current `VERSION`. It never removes the current `coco:latest` / `coco:<VERSION>` image, never touches non-coco images, and never force-removes (an image still referenced by a container is skipped and reported, not force-deleted). It lists what will be removed and asks for confirmation first.
 
+## Releasing
+
+`bin/release` cuts a release from the `VERSION` file: bump `VERSION`, then run it.
+
+```bash
+echo "0.2.0" > VERSION
+bin/release           # commits VERSION (refuses if anything else is dirty), tags v0.2.0, pushes both
+bin/release --dry-run  # preview the commands without running them
+bin/release --force    # skip the "VERSION must be newer than the highest existing tag" guard
+```
+
+No-ops if `v<VERSION>` is already tagged. Refuses on a detached HEAD or if `VERSION` isn't a newer semver than the highest existing `vX.Y.Z` tag (typo/regression guard).
+
 ## Shell
 
 bash, with git completion, colored prompt & current git branch.
