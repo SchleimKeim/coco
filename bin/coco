@@ -278,6 +278,18 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# rootless podman puts container UIDs in a subuid range by default, so the
+# in-container coco user (built with the host UID, see BUILD_UID below)
+# does not actually map 1:1 to the host user -- bind-mounted project/cache
+# dirs come up owned by an unrelated UID and are unreadable. --userns=keep-id
+# is podman-only (real docker never remaps UIDs like this) and only applies
+# rootless (rootful podman doesn't remap either).
+RUN_USERNS_ARGS=()
+if docker --version 2>&1 | grep -qi podman \
+   && [ "$(docker info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = "true" ]; then
+  RUN_USERNS_ARGS+=(--userns=keep-id)
+fi
+
 # handled before any .coco/ dir creation below: --cleanup is not tied to a
 # project, and must not litter a stray .coco/ in whatever directory it's
 # run from.
@@ -550,6 +562,7 @@ fi
 # --- run ---
 exec docker run --rm -it \
   --name "$CONTAINER_NAME" \
+  "${RUN_USERNS_ARGS[@]+"${RUN_USERNS_ARGS[@]}"}" \
   -e TZ="$BUILD_TZ" \
   -e HOME="$HOME" \
   -e GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}" \
