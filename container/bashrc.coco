@@ -2,6 +2,8 @@
 
 [ -f /usr/share/bash-completion/bash_completion ] && source /usr/share/bash-completion/bash_completion
 
+alias ls='ls --color=auto'
+
 parse_git_branch() {
   git branch 2>/dev/null | sed -n '/\* /s/^\* //p'
 }
