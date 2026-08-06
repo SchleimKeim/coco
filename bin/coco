@@ -1,0 +1,210 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+IMAGE="coco:latest"
+
+REBUILD=0
+RECONFIGURE=0
+for arg in "$@"; do
+  case "$arg" in
+    --rebuild) REBUILD=1 ;;
+    --config) RECONFIGURE=1 ;;
+    -h|--help)
+      echo "usage: coco [--rebuild] [--config]"
+      exit 0
+      ;;
+  esac
+done
+
+ask_yn() {
+  local prompt="$1"
+  local reply
+  read -r -p "$prompt [Y/n] " reply || return 1
+  [ -z "$reply" ] || [[ "$reply" =~ ^[Yy] ]]
+}
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "error: docker not found on PATH. install docker (or a compatible CLI, e.g. podman aliased to docker) and try again." >&2
+  exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "error: docker daemon not reachable. is docker running?" >&2
+  exit 1
+fi
+
+PROJECT_DIR="$(pwd)"
+
+if [ "$PROJECT_DIR" = "$HOME" ]; then
+  echo "WARNING: you are about to run coco in \$HOME ($HOME). This will mount your entire home directory into the container."
+  ask_yn "continue anyway?" || exit 1
+fi
+
+# --- .coco project data dir ---
+COCO_DIR="$PROJECT_DIR/.coco"
+mkdir -p "$COCO_DIR/cache/pip" "$COCO_DIR/cache/npm" "$COCO_DIR/cache/composer" "$COCO_DIR/vim"
+touch "$COCO_DIR/bash_history"
+CONFIG_FILE="$COCO_DIR/config"
+
+# --- gitignore check ---
+if [ -d "$PROJECT_DIR/.git" ]; then
+  GITIGNORE="$PROJECT_DIR/.gitignore"
+  if [ ! -f "$GITIGNORE" ] || ! grep -qxF ".coco/" "$GITIGNORE" 2>/dev/null; then
+    if ask_yn "add .coco/ to .gitignore?"; then
+      echo ".coco/" >> "$GITIGNORE"
+    fi
+  fi
+fi
+
+# --- PATH check ---
+if ! command -v coco >/dev/null 2>&1; then
+  if ask_yn "coco is not on your PATH. add it to ~/.bashrc?"; then
+    echo "export PATH=\"$SCRIPT_DIR:\$PATH\"" >> "$HOME/.bashrc"
+    echo "added. run: source ~/.bashrc"
+  fi
+fi
+
+# --- agent selection ---
+# (plain case statement instead of an associative array: macOS ships bash 3.2
+# as /bin/bash, which has no associative array support)
+AGENT_NAMES=(claude codex copilot cursor gemini)
+agent_mounts() {
+  case "$1" in
+    # .claude.json is intentionally NOT bind-mounted directly: it lives inside
+    # the mounted .claude/ dir (see container/entrypoint.sh) and is symlinked
+    # to ~/.claude.json in-container. bind-mounting a single file breaks
+    # claude's atomic (temp-file + rename) config writes: the temp file lands
+    # on the container's own overlay fs while the target is on a different
+    # (host-mounted) fs, so rename() hits EXDEV and falls back to a non-atomic
+    # write that can be read mid-write, corrupting the JSON.
+    # container-side target uses the literal host $HOME path (not /home/coco):
+    # some agents (claude included) cache absolute host-config paths inside
+    # their own config files (e.g. plugin marketplace install locations). if
+    # the container mounted these under a different home path, those cached
+    # absolute paths would resolve to nothing in-container. matching the host
+    # path exactly keeps them valid on both sides of the mount.
+    claude)
+      echo "$HOME/.claude:$HOME/.claude"
+      # claude-mem plugin's data dir (SQLite db, vector index) lives outside
+      # ~/.claude entirely; without this mount every container run gets a
+      # fresh empty store that --rm then discards, so memory never persists.
+      echo "$HOME/.claude-mem:$HOME/.claude-mem"
+      ;;
+    codex) echo "$HOME/.codex:$HOME/.codex" ;;
+    copilot) echo "$HOME/.config/gh-copilot:$HOME/.config/gh-copilot" ;;
+    cursor) echo "$HOME/.cursor:$HOME/.cursor" ;;
+    gemini) echo "$HOME/.gemini:$HOME/.gemini" ;;
+  esac
+}
+
+select_agents() {
+  echo "select coding agent(s) to enable for this project:"
+  local i=1
+  for a in "${AGENT_NAMES[@]}"; do
+    echo "  $i) $a"
+    i=$((i + 1))
+  done
+  if ! read -r -p "enter numbers separated by spaces (blank for none): " selection; then
+    echo "no input available, skipping agent selection (will ask again next run)."
+    return 1
+  fi
+  local chosen=()
+  for n in $selection; do
+    local idx=$((n - 1))
+    if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#AGENT_NAMES[@]}" ]; then
+      chosen+=("${AGENT_NAMES[$idx]}")
+    fi
+  done
+  local IFS=,
+  echo "AGENTS=${chosen[*]+"${chosen[*]}"}" > "$CONFIG_FILE"
+}
+
+if [ ! -f "$CONFIG_FILE" ] || [ "$RECONFIGURE" = 1 ]; then
+  select_agents || true
+fi
+
+AGENTS=""
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+# --- ensure selected agents' host config paths exist ---
+MOUNT_ARGS=()
+IFS=',' read -r -a SELECTED <<< "$AGENTS"
+for agent in "${SELECTED[@]+"${SELECTED[@]}"}"; do
+  [ -z "$agent" ] && continue
+  for pair in $(agent_mounts "$agent"); do
+    host_path="${pair%%:*}"
+    container_path="${pair##*:}"
+    if [ ! -e "$host_path" ]; then
+      if ask_yn "create $host_path for $agent?"; then
+        if [[ "$host_path" == *.json ]]; then
+          echo '{}' > "$host_path"
+        else
+          mkdir -p "$host_path"
+        fi
+      else
+        continue
+      fi
+    fi
+    MOUNT_ARGS+=(-v "$host_path:$container_path")
+  done
+done
+
+# --- per-project mount path / container name ---
+# mount path keeps the bare basename (not hash-suffixed): claude-mem keys
+# its memory store by `basename(git rev-parse --show-toplevel)`, so the
+# in-container repo path must resolve to the same basename as on the host
+# for memory continuity between host and container sessions. container
+# runs are filesystem-isolated from each other, so two different host
+# projects sharing a basename can't collide on this path. the hash still
+# disambiguates CONTAINER_NAME, since docker requires that to be unique.
+PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256sum | cut -c1-6)"
+BASENAME="$(basename "$PROJECT_DIR")"
+SLUG="${BASENAME}-${PROJECT_HASH}"
+MOUNT_PATH="/code/$BASENAME"
+CONTAINER_NAME="coco-$SLUG"
+
+# --- build image if needed ---
+BUILD_UID="${UID:-$(id -u)}"
+BUILD_GID="${GID:-$(id -g)}"
+BUILD_TZ="${TZ:-UTC}"
+
+HASH_INPUT="$(cat "$REPO_DIR/Dockerfile" "$REPO_DIR/container/entrypoint.sh" "$REPO_DIR/container/bashrc.coco" "$REPO_DIR/container/vimrc")$BUILD_UID$BUILD_GID$BUILD_TZ$HOME"
+BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256sum | cut -c1-16)"
+
+CURRENT_HASH="$(docker inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
+
+if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
+  echo "building $IMAGE (hash changed or --rebuild requested)..."
+  docker build \
+    --build-arg UID="$BUILD_UID" \
+    --build-arg GID="$BUILD_GID" \
+    --build-arg TZ="$BUILD_TZ" \
+    --build-arg HOME="$HOME" \
+    --label coco.hash="$BUILD_HASH" \
+    -t "$IMAGE" \
+    -f "$REPO_DIR/Dockerfile" \
+    "$REPO_DIR"
+fi
+
+# --- run ---
+exec docker run --rm -it \
+  --name "$CONTAINER_NAME" \
+  -e TZ="$BUILD_TZ" \
+  -e HOME="$HOME" \
+  -e GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-}" \
+  -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}" \
+  -e XDEBUG_ENABLE="${XDEBUG_ENABLE:-0}" \
+  -w "$MOUNT_PATH" \
+  -v "$PROJECT_DIR:$MOUNT_PATH" \
+  -v "$COCO_DIR/cache/pip:$HOME/.cache/pip" \
+  -v "$COCO_DIR/cache/npm:$HOME/.cache/npm" \
+  -v "$COCO_DIR/cache/composer:$HOME/.cache/composer" \
+  -v "$COCO_DIR/bash_history:$HOME/.bash_history" \
+  -v "$COCO_DIR/vim:$HOME/.vim" \
+  "${MOUNT_ARGS[@]+"${MOUNT_ARGS[@]}"}" \
+  "$IMAGE"
