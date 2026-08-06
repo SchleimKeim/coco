@@ -196,12 +196,13 @@ check_update() {
     echo "coco's checkout has uncommitted changes; update manually in $REPO_DIR." >&2
     return 0
   fi
-  if ! git -C "$REPO_DIR" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    echo "branch '$branch' has no upstream; update manually in $REPO_DIR." >&2
-    return 0
-  fi
-  if ! git -C "$REPO_DIR" pull --ff-only; then
-    echo "git pull --ff-only failed (diverged history?); update manually in $REPO_DIR." >&2
+  # pull from the SAME remote+branch that was just checked for tags,
+  # explicitly -- not a bare `git pull`, which follows the branch's
+  # configured upstream and could silently target a different remote than
+  # $remote if they've ever diverged (e.g. COCO_UPDATE_REMOTE set to
+  # something other than the tracked upstream).
+  if ! git -C "$REPO_DIR" pull --ff-only "$remote" "$branch"; then
+    echo "git pull --ff-only from '$remote' failed (diverged history, or branch '$branch' missing there?); update manually in $REPO_DIR." >&2
     return 0
   fi
 

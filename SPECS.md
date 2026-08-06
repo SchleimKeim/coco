@@ -103,7 +103,7 @@ If `coco:<VERSION>` is ever missing while `coco:latest` still matches the curren
 
 On startup (after the docker preflight, before agent selection), `coco` checks whether a newer release is available: compares local `VERSION` against the highest `vX.Y.Z` tag from `git ls-remote --tags origin` (configurable via `COCO_UPDATE_REMOTE`). Checked at most once per 24h, cached in `${XDG_CACHE_HOME:-$HOME/.cache}/coco/update-check`; `coco --check-update` forces an immediate check, `coco --no-update-check` / `COCO_NO_UPDATE_CHECK=1` skips it for the run.
 
-The check silently no-ops (no output, no prompt) when: `coco` has no `VERSION`; not run from a git checkout or the checkout has no matching remote; not an interactive terminal; the remote is unreachable (network failure backs off for 1h instead of the usual 24h); or the remote has no tags yet. On finding a newer release, it prompts to update; on confirmation it runs `git pull --ff-only` (refusing on a dirty worktree, detached HEAD, or a branch with no upstream) and re-execs `coco` so the build gate above picks up the pulled changes.
+The check silently no-ops (no output, no prompt) when: `coco` has no `VERSION`; not run from a git checkout or the checkout has no matching remote; not an interactive terminal; the remote is unreachable (network failure backs off for 1h instead of the usual 24h); or the remote has no tags yet. On finding a newer release, it prompts to update; on confirmation it runs `git pull --ff-only <remote> <branch>` against the same remote that was checked (refusing on a dirty worktree or detached HEAD) and re-execs `coco` so the build gate above picks up the pulled changes.
 
 ## Cleanup
 
