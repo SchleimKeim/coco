@@ -351,9 +351,59 @@ if [ "$CLEANUP" = 1 ]; then
   exit 0
 fi
 
+# --- build image if needed ---
+# lives here, before any PROJECT_DIR-dependent code below: building doesn't
+# touch the project dir at all (only REPO_DIR/HOME/RUNTIME_BIN), so --rebuild
+# can run from anywhere -- including $HOME -- without tripping the mount
+# warning below or walking through the interactive project setup.
+BUILD_UID="${UID:-$(id -u)}"
+BUILD_GID="${GID:-$(id -g)}"
+BUILD_TZ="${TZ:-UTC}"
+
+# COCO_VERSION is folded into the hash rather than being a second gate
+# condition: a version bump is by definition a different artifact, so it
+# should force a rebuild the same way any other content change does. this
+# keeps the rebuild predicate a single condition instead of a compound
+# "hash changed OR version changed".
+HASH_INPUT="$(cat "$REPO_DIR/Dockerfile" "$REPO_DIR/container/entrypoint.sh" "$REPO_DIR/container/bashrc.coco" "$REPO_DIR/container/vimrc")$BUILD_UID$BUILD_GID$BUILD_TZ$HOME$COCO_VERSION"
+BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256_hex | cut -c1-16)"
+
+CURRENT_HASH="$("$RUNTIME_BIN" inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
+
+BUILD_TAGS=(-t "$IMAGE")
+[ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
+
+if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
+  echo "Building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
+  "$RUNTIME_BIN" build \
+    --build-arg UID="$BUILD_UID" \
+    --build-arg GID="$BUILD_GID" \
+    --build-arg TZ="$BUILD_TZ" \
+    --build-arg HOME="$HOME" \
+    --label coco.hash="$BUILD_HASH" \
+    --label coco.version="${COCO_VERSION:-}" \
+    "${BUILD_TAGS[@]}" \
+    -f "$REPO_DIR/Dockerfile" \
+    "$REPO_DIR"
+fi
+
+# idempotent and instant: guarantees the coco:$COCO_VERSION alias exists
+# even when no build ran (e.g. it was manually deleted while coco:latest
+# still matches the hash -- re-tagging is free, forcing a rebuild for pure
+# bookkeeping would not be).
+if [ -n "$COCO_VERSION" ]; then
+  "$RUNTIME_BIN" tag "$IMAGE" "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true
+fi
+
+# --rebuild is a standalone action, like --cleanup: report and stop instead
+# of falling through into project setup / agent selection / run.
+if [ "$REBUILD" = 1 ]; then
+  exit 0
+fi
+
 PROJECT_DIR="$(pwd)"
 
-if [ "$PROJECT_DIR" = "$HOME" ]; then
+if [ "$PROJECT_DIR" = "$HOME" ] && [ "$FORCE_UPDATE_CHECK" != 1 ]; then
   echo "WARNING: you are about to run coco in \$HOME ($HOME)."
   echo "This will mount your entire home directory into the container."
   ask_yn "Continue anyway?" n || exit 1
@@ -572,46 +622,6 @@ BASENAME="$(basename "$PROJECT_DIR")"
 SLUG="${BASENAME}-${PROJECT_HASH}"
 MOUNT_PATH="$PROJECT_DIR"
 CONTAINER_NAME="coco-$SLUG"
-
-# --- build image if needed ---
-BUILD_UID="${UID:-$(id -u)}"
-BUILD_GID="${GID:-$(id -g)}"
-BUILD_TZ="${TZ:-UTC}"
-
-# COCO_VERSION is folded into the hash rather than being a second gate
-# condition: a version bump is by definition a different artifact, so it
-# should force a rebuild the same way any other content change does. this
-# keeps the rebuild predicate a single condition instead of a compound
-# "hash changed OR version changed".
-HASH_INPUT="$(cat "$REPO_DIR/Dockerfile" "$REPO_DIR/container/entrypoint.sh" "$REPO_DIR/container/bashrc.coco" "$REPO_DIR/container/vimrc")$BUILD_UID$BUILD_GID$BUILD_TZ$HOME$COCO_VERSION"
-BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256_hex | cut -c1-16)"
-
-CURRENT_HASH="$("$RUNTIME_BIN" inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
-
-BUILD_TAGS=(-t "$IMAGE")
-[ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
-
-if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
-  echo "Building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
-  "$RUNTIME_BIN" build \
-    --build-arg UID="$BUILD_UID" \
-    --build-arg GID="$BUILD_GID" \
-    --build-arg TZ="$BUILD_TZ" \
-    --build-arg HOME="$HOME" \
-    --label coco.hash="$BUILD_HASH" \
-    --label coco.version="${COCO_VERSION:-}" \
-    "${BUILD_TAGS[@]}" \
-    -f "$REPO_DIR/Dockerfile" \
-    "$REPO_DIR"
-fi
-
-# idempotent and instant: guarantees the coco:$COCO_VERSION alias exists
-# even when no build ran (e.g. it was manually deleted while coco:latest
-# still matches the hash -- re-tagging is free, forcing a rebuild for pure
-# bookkeeping would not be).
-if [ -n "$COCO_VERSION" ]; then
-  "$RUNTIME_BIN" tag "$IMAGE" "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true
-fi
 
 # --- run ---
 exec "$RUNTIME_BIN" run --rm -it \
