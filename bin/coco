@@ -20,26 +20,20 @@ esac
 IMAGE_REPO="coco"
 IMAGE="$IMAGE_REPO:latest"
 
-# --- container runtime: docker, or podman via its docker-CLI symlink ---
-# podman-docker installs /usr/bin/docker as a symlink to the podman binary;
-# podman notices its own argv[0] is "docker" and prints an "Emulate Docker
-# CLI..." notice on every invocation before proceeding. Resolving the
-# symlink ourselves (pure filesystem check, no process spawned, no notice)
-# lets us call `podman` directly instead. Real docker installs (symlink
-# resolves to an actual docker binary, or docker isn't a symlink at all)
-# are unaffected; if docker is missing entirely but podman is present
-# (no podman-docker compat shim installed), podman is used directly too.
-RUNTIME_BIN=""
-if command -v docker >/dev/null 2>&1; then
-  RUNTIME_BIN="docker"
-  DOCKER_REAL_PATH="$(readlink -f "$(command -v docker)" 2>/dev/null || command -v docker)"
-  if [ "$(basename "$DOCKER_REAL_PATH")" = "podman" ] && command -v podman >/dev/null 2>&1; then
-    RUNTIME_BIN="podman"
-  fi
-elif command -v podman >/dev/null 2>&1; then
+# --- container runtime: prefer podman, fall back to docker ---
+# podman-docker's /usr/bin/docker "symlink" is a wrapper script on some
+# distros (not an actual symlink), so resolving it via readlink to detect
+# podman-in-disguise doesn't work everywhere. Simpler and more robust: if
+# podman is on PATH, use it directly (also sidesteps the "Emulate Docker
+# CLI..." notice podman prints when invoked as "docker"); only fall back to
+# docker when podman isn't installed.
+if command -v podman >/dev/null 2>&1; then
   RUNTIME_BIN="podman"
+elif command -v docker >/dev/null 2>&1; then
+  RUNTIME_BIN="docker"
+else
+  RUNTIME_BIN="docker"
 fi
-RUNTIME_BIN="${RUNTIME_BIN:-docker}"
 
 usage() {
   cat <<EOF
