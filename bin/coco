@@ -367,6 +367,16 @@ CURRENT_HASH="$("$RUNTIME_BIN" inspect --format '{{ index .Config.Labels "coco.h
 BUILD_TAGS=(-t "$IMAGE")
 [ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
 
+# an explicit `--rebuild` is the user's signal to also refresh the coding
+# agent CLIs (claude, codex, gemini-cli, cursor): they're installed unpinned
+# in the Dockerfile, so a same-Dockerfile rebuild would otherwise just reuse
+# Docker's cached npm-install layer forever. A passive hash-triggered rebuild
+# (Dockerfile/VERSION actually changed) does NOT bust this -- that already
+# invalidates naturally when the Dockerfile itself changed, and shouldn't
+# force a fresh agent pull on every unrelated content change.
+AGENTS_BUST_ARGS=()
+[ "$REBUILD" = 1 ] && AGENTS_BUST_ARGS=(--build-arg COCO_AGENTS_CACHE_BUST="$(date +%s)")
+
 if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
   echo "Building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
   "$RUNTIME_BIN" build \
@@ -374,6 +384,7 @@ if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
     --build-arg GID="$BUILD_GID" \
     --build-arg TZ="$BUILD_TZ" \
     --build-arg HOME="$HOME" \
+    "${AGENTS_BUST_ARGS[@]+"${AGENTS_BUST_ARGS[@]}"}" \
     --label coco.hash="$BUILD_HASH" \
     --label coco.version="${COCO_VERSION:-}" \
     "${BUILD_TAGS[@]}" \

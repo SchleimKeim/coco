@@ -64,7 +64,13 @@ RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash \
 RUN curl -fsSL https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
 # --- coding agent CLIs (installed regardless of per-project selection) ---
-RUN npm install -g @anthropic-ai/claude-code \
+# unpinned -- always installs whatever's currently latest. Docker still
+# caches this layer as long as the Dockerfile text and COCO_AGENTS_CACHE_BUST
+# are unchanged, so a plain rebuild does NOT pick up new agent releases;
+# `coco --rebuild` busts it explicitly (see bin/coco) to force a refresh.
+ARG COCO_AGENTS_CACHE_BUST=0
+RUN echo "cache-bust: ${COCO_AGENTS_CACHE_BUST}" \
+ && npm install -g @anthropic-ai/claude-code \
  && npm install -g @openai/codex \
  && npm install -g @google/gemini-cli \
  && (curl -fsSL https://cursor.com/install | bash || true)
