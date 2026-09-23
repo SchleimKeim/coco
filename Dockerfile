@@ -92,9 +92,20 @@ ARG HOME=/home/coco
 # -M (no skel copy), not -m: /etc/skel's ~/.bash_profile -> ~/.bashrc ->
 # /etc/bashrc chain would run after /etc/profile.d/coco-bashrc.sh on
 # login shells and clobber its PS1 with the stock [user@host dir]$ one.
-RUN (getent group "${GID}" >/dev/null || groupadd -g "${GID}" coco) \
+#
+# no chown to ${UID} and no `USER coco` anywhere at build time: under
+# rootless podman the build runs in a user namespace that maps only the
+# host user's own UID plus its /etc/subuid range (65536 ids by default),
+# so a large UID (e.g. 577997 on LDAP/NFS sites) is unmapped there and
+# chown/setuid to it fail with EINVAL. useradd itself copes (only warns).
+# ownership is fixed up at container start instead (entrypoint.sh), where
+# --userns=keep-id makes the UID resolvable.
+# host GID may collide with a stock group (macOS staff=20 is almalinux's
+# games): rename it rather than skip, so `id` reads coco, not games.
+RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
+     if [ -n "$grp" ]; then [ "$grp" = coco ] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
  && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
- && mkdir -p "${HOME}" && chown "${UID}:${GID}" "${HOME}" \
+ && mkdir -p "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
  && chmod 0440 /etc/sudoers.d/coco
 
@@ -102,11 +113,14 @@ RUN (getent group "${GID}" >/dev/null || groupadd -g "${GID}" coco) \
 # no separate extension install needed.
 
 # claude-code manages its own native binary under ~/.local/bin, separate from
-# the npm-installed shim above; bake it into the image now (as coco) so fresh
-# --rm containers don't hit "missing or broken, run claude install to repair"
-USER coco
+# the npm-installed shim above; bake it into the image now so fresh --rm
+# containers don't hit "missing or broken, run claude install to repair".
+# runs as root (see the UID note above); entrypoint.sh chowns ~/.local to
+# coco at start. as root the installer also succeeds at removing the npm
+# shim (/usr/local/bin/claude), so ~/.local/bin must be on PATH -- nothing
+# else puts it there (no skel .bash_profile, see -M above).
 RUN HOME="${HOME}" claude install
-USER root
+ENV PATH="${HOME}/.local/bin:${PATH}"
 
 # --- shell / vim defaults ---
 COPY container/bashrc.coco /etc/profile.d/coco-bashrc.sh
