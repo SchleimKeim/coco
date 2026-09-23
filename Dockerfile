@@ -100,7 +100,10 @@ ARG HOME=/home/coco
 # chown/setuid to it fail with EINVAL. useradd itself copes (only warns).
 # ownership is fixed up at container start instead (entrypoint.sh), where
 # --userns=keep-id makes the UID resolvable.
-RUN (getent group "${GID}" >/dev/null || groupadd -g "${GID}" coco) \
+# host GID may collide with a stock group (macOS staff=20 is almalinux's
+# games): rename it rather than skip, so `id` reads coco, not games.
+RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
+     if [ -n "$grp" ]; then [ "$grp" = coco ] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
  && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
  && mkdir -p "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
