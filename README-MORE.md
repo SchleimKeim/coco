@@ -63,6 +63,7 @@ project (pwd/.coco/...): cache/pip cache/npm cache/composer bash_history vim
 - hash of Dockerfile + build context + UID/GID/TZ/HOME + VERSION → stored as `coco.hash` label
 - rebuilds only if hash changed; `--rebuild` forces it
 - missing `coco:<VERSION>` tag but matching hash → re-tags for free, no rebuild
+- Podman build fails with `disk quota exceeded` writing to `/tmp/container_images_storage…`: podman stages layer blobs in `$TMPDIR`, and a small tmpfs `/tmp` overflows on the coding-agent layer. Build with `TMPDIR=/var/tmp coco --rebuild` (only the build needs it; `containers.conf` `image_copy_tmp_dir` is ignored when `TMPDIR` is set)
 
 ## Update check
 - runs on startup, before agent selection
