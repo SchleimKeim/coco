@@ -26,6 +26,7 @@ RUN dnf install -y epel-release \
     python3.14 python3.14-pip \
     openldap-clients \
     bash-completion sudo shadow-utils tzdata \
+    zsh ripgrep fd-find fzf opentmux \
  && dnf clean all \
  && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
  && ln -sf /usr/bin/python3.14 /usr/local/bin/python \
