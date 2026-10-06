@@ -73,7 +73,7 @@ ARG COCO_AGENTS_CACHE_BUST=0
 RUN echo "cache-bust: ${COCO_AGENTS_CACHE_BUST}" \
  && npm install -g @anthropic-ai/claude-code \
  && npm install -g @openai/codex \
- && npm install -g @google/gemini-cli \
+ && (curl -fsSL https://antigravity.google/cli/install.sh | bash || true) \
  && (curl -fsSL https://cursor.com/install | bash || true)
 
 # GitHub CLI + Copilot extension
