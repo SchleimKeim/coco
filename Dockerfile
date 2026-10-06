@@ -104,7 +104,7 @@ ARG HOME=/home/coco
 # host GID may collide with a stock group (macOS staff=20 is almalinux's
 # games): rename it rather than skip, so `id` reads coco, not games.
 RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
-     if [ -n "$grp" ]; then [ "$grp" = coco ] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
+     if [[ -n "$grp" ]]; then [[ "$grp" = coco ]] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
  && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
  && mkdir -p "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
@@ -126,8 +126,11 @@ ENV PATH="${HOME}/.local/bin:${PATH}"
 # --- shell / vim defaults ---
 COPY container/bashrc.coco /etc/profile.d/coco-bashrc.sh
 COPY container/vimrc /etc/vimrc.local
-RUN chmod 0644 /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
- && echo 'source /etc/vimrc.local' >> /etc/vimrc
+COPY container/zshrc.local /etc/zshrc.local
+RUN chmod 0644 \
+ /etc/zshrc.local /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
+ && echo 'source /etc/vimrc.local' >> /etc/vimrc \
+ && echo 'source /etc/zshrc.local' >> /etc/zshrc 
 
 # --- entrypoint ---
 COPY container/entrypoint.sh /usr/local/bin/coco-entrypoint.sh

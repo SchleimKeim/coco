@@ -1,0 +1,74 @@
+KEYTIMEOUT=${KEYTIMEOUT:-1}
+HISTFILE=${HISTFILE:-$HOME/.histfile}
+HISTORY_IGNORE=${HISTORY_IGNORE:-"(bg|fg|clear|exit|h|history|l|l[als]|pwd)"}
+HISTSIZE=${HISTSIZE:-50000}
+SAVEHIST=${SAVEHIST:-50000}
+EDITOR=${EDITOR:-$(whence -p vim)}
+PAGER=${PAGER:-$(whence -p less)}
+export KEYTIMEOUT HISTFILE HISTORY_IGNORE HISTSIZE SAVEHIST EDITOR PAGER
+
+zmodload | grep -q 'zsh/complist' || zmodload zsh/complist
+
+autoload -Uz bashcompinit 
+bashcompinit
+
+# The following lines were added by compinstall
+
+zstyle ':completion:*' auto-description '%d'
+zstyle ':completion:*' completer _complete _ignored _approximate
+zstyle ':completion:*' expand prefix suffix
+zstyle ':completion:*' file-sort name
+zstyle ':completion:*' list-colors ''
+zstyle ':completion:*' list-prompt %SAt %p: Hit TAB for more, or the character to insert%s
+zstyle ':completion:*' list-suffixes true
+zstyle ':completion:*' matcher-list '' 'm:{[:lower:]}={[:upper:]}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
+zstyle ':completion:*' preserve-prefix '//[^/]##/'
+zstyle ':completion:*' squeeze-slashes true
+zstyle :compinstall filename '~/.zshrc'
+
+autoload -Uz compinit
+compinit
+# End of lines added by compinstall
+
+# Lines configured by zsh-newuser-install
+unsetopt autocd beep nomatch notify
+setopt ALWAYS_LAST_PROMPT
+setopt ALWAYS_TO_END
+setopt APPEND_HISTORY
+setopt AUTO_CONTINUE
+setopt AUTO_LIST
+setopt AUTO_PUSHD
+setopt CHASE_LINKS
+setopt CORRECT
+setopt EXTENDED_GLOB
+setopt EXTENDED_HISTORY			# Record timestamp in history
+setopt GLOB_STAR_SHORT          # makes it so that: `ls -ld -- **.c` is equivalent to `ls -ld -- **/*.c`
+setopt HIST_EXPIRE_DUPS_FIRST	# Expire duplicate entries first when trimming history
+setopt HIST_FIND_NO_DUPS		# Do not display a line previously found
+setopt HIST_IGNORE_ALL_DUPS		# Delete old recorded entry if new entry is a duplicate
+setopt HIST_IGNORE_DUPS			# Dont record an entry that was just recorded again
+setopt HIST_IGNORE_SPACE		# Dont record an entry starting with a space
+setopt HIST_REDUCE_BLANKS
+setopt HIST_SAVE_NO_DUPS		# Dont write duplicate entries in the history file
+setopt HIST_VERIFY				# Insert entry before executing
+setopt INTERACTIVECOMMENTS
+setopt NO_BG_NICE
+setopt NO_CHECK_JOBS
+setopt NO_HUP                   # Keep jobs running in the background
+setopt NULL_GLOB
+setopt NUMERIC_GLOB_SORT
+setopt PUSHD_IGNORE_DUPS        # Do not store duplicates in the stack.
+setopt PUSHD_SILENT             # Do not print the directory stack after pushd or popd.
+setopt PUSHD_TO_HOME
+setopt REMATCH_PCRE             # enable perl regexp with the =~ operator
+setopt RM_STAR_WAIT
+setopt SHARE_HISTORY			# Share history between all sessions
+setopt TYPESET_SILENT
+# End of lines configured by zsh-newuser-install
+
+# <CTRL>->E opens up vim to edit your commandline
+# and/or write entire scripts
+autoload -Uz edit-command-line
+zle -N edit-command-line
+bindkey -M vicmd '^e' edit-command-line
+bindkey -M viins '^e' edit-command-line
