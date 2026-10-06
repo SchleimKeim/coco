@@ -1,15 +1,15 @@
 # coco default shell config
 
-[ -f /usr/share/bash-completion/bash_completion ] && source /usr/share/bash-completion/bash_completion
+[[ -f /usr/share/bash-completion/bash_completion ]] && source /usr/share/bash-completion/bash_completion
 
 alias ls='ls --color=auto'
 
 parse_git_branch() {
-  git branch 2>/dev/null | sed -n '/\* /s/^\* //p'
+  git branch --show-current 2>/dev/null
 }
 
-if [ -n "$PS1" ]; then
-  export PS1='\[\e[32m\]\u@🥥\[\e[0m\]:\[\e[34m\]\w\[\e[33m\]$(b=$(parse_git_branch); [ -n "$b" ] && echo " ($b)")\[\e[0m\]\$ '
+if [[ -n "$PS1" ]]; then
+  export PS1='\[\e[32m\]\u@🥥\[\e[0m\]:\[\e[34m\]\w\[\e[33m\]$(git branch --show-current 2>/dev/null)\[\e[0m\]\$ '
 fi
 
 export HISTFILE=~/.bash_history
@@ -22,3 +22,6 @@ export HISTFILESIZE=20000
 claude-login() {
   claude --ax-screen-reader auth login "$@"
 }
+export -f claude-login
+
+# vi:ts=4:sts=4:sw=4:ft=bash:ai:et
