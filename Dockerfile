@@ -78,7 +78,6 @@ RUN echo "cache-bust: ${COCO_AGENTS_CACHE_BUST}" \
  && npm install -g @google/gemini-cli \
  && npm install -g @qwen-code/qwen-code \
  && npm install -g @opencode/cli \
- && (curl -fsSL https://antigravity.google/cli/install.sh | bash || true) \
  && (curl -fsSL https://cursor.com/install | bash || true)
 
 # GitHub CLI + Copilot extension
@@ -127,7 +126,8 @@ RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
 # else puts it there (no skel .bash_profile, see -M above).
 
 RUN curl -fsSL --output install.sh https://antigravity.google/cli/install.sh && \
-     HOME="${HOME}" bash install.sh
+     HOME="${HOME}" bash install.sh && \
+     rm install.sh
 RUN HOME="${HOME}" claude install
 ENV PATH="${HOME}/.local/bin:${PATH}"
 
