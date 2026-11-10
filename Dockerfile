@@ -125,6 +125,9 @@ RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
 # coco at start. as root the installer also succeeds at removing the npm
 # shim (/usr/local/bin/claude), so ~/.local/bin must be on PATH -- nothing
 # else puts it there (no skel .bash_profile, see -M above).
+
+RUN curl -fsSL --output install.sh https://antigravity.google/cli/install.sh && \
+     HOME="${HOME}" bash install.sh
 RUN HOME="${HOME}" claude install
 ENV PATH="${HOME}/.local/bin:${PATH}"
 
