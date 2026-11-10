@@ -25,7 +25,9 @@ RUN dnf install -y epel-release \
     python3 python3-pip python3-virtualenv \
     python3.14 python3.14-pip \
     openldap-clients \
-    bash-completion sudo shadow-utils tzdata socat \
+    bash-completion sudo shadow-utils tzdata \
+    zsh ripgrep fd-find fzf opentmux kitty-terminfo \
+    socat \
  && dnf clean all \
  && ln -sf /usr/bin/python3.14 /usr/local/bin/python3 \
  && ln -sf /usr/bin/python3.14 /usr/local/bin/python \
@@ -76,6 +78,7 @@ RUN echo "cache-bust: ${COCO_AGENTS_CACHE_BUST}" \
  && npm install -g @google/gemini-cli \
  && npm install -g @qwen-code/qwen-code \
  && npm install -g @opencode/cli \
+ && (curl -fsSL https://antigravity.google/cli/install.sh | bash || true) \
  && (curl -fsSL https://cursor.com/install | bash || true)
 
 # GitHub CLI + Copilot extension
@@ -106,7 +109,7 @@ ARG HOME=/home/coco
 # host GID may collide with a stock group (macOS staff=20 is almalinux's
 # games): rename it rather than skip, so `id` reads coco, not games.
 RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
-     if [ -n "$grp" ]; then [ "$grp" = coco ] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
+     if [[ -n "$grp" ]]; then [[ "$grp" = coco ]] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
  && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
  && mkdir -p "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
@@ -128,8 +131,11 @@ ENV PATH="${HOME}/.local/bin:${PATH}"
 # --- shell / vim defaults ---
 COPY container/bashrc.coco /etc/profile.d/coco-bashrc.sh
 COPY container/vimrc /etc/vimrc.local
-RUN chmod 0644 /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
- && echo 'source /etc/vimrc.local' >> /etc/vimrc
+COPY container/zshrc.local /etc/zshrc.local
+RUN chmod 0644 \
+ /etc/zshrc.local /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
+ && echo 'source /etc/vimrc.local' >> /etc/vimrc \
+ && echo 'source /etc/zshrc.local' >> /etc/zshrc 
 
 # --- entrypoint ---
 COPY container/entrypoint.sh /usr/local/bin/coco-entrypoint.sh

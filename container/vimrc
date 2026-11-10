@@ -1,11 +1,57 @@
-syntax on
+unlet! skip_defaults_vim
+source $VIMRUNTIME/defaults.vim
+
+packadd! matchit
+
+if version >= 600
+    filetype plugin indent on
+endif
+
+syntax enable
+
+set autoindent
+set autoread
 set number
 set incsearch
 set hlsearch
 set ignorecase
 set smartcase
 set expandtab
+set incsearch
+set modeline
+set nocompatible
+set ruler
+set smartindent
+set switchbuf=useopen
+set smarttab
+set showmatch
+set shiftwidth=4
+set shortmess=as
+set noconfirm
+set noerrorbells
+set nojoinspaces
+set novisualbell
 set tabstop=4
 set shiftwidth=4
 set autoindent
 set backspace=indent,eol,start
+set spelllang=de_ch,en
+set spelloptions=camel
+set complete=.,w,b,u,t,i,k,spell
+
+if has('wildmenu')
+    set wildchar=<Tab>
+    set wildcharm=<C-Z>
+    set wildmenu
+    set wildmode=full
+    set wildoptions=pum
+endif
+
+if has('termguicolors')
+    set termguicolors
+    set t_Co=16777216
+    if has('pumopt')
+        set pumopt=opacity:90,border:custom:─;│;─;│;┌;┐;┘;└,shadow,margin
+    endif
+    set bg=dark
+endif
