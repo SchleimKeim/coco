@@ -109,7 +109,7 @@ ARG HOME=/home/coco
 # games): rename it rather than skip, so `id` reads coco, not games.
 RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
      if [[ -n "$grp" ]]; then [[ "$grp" = coco ]] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
- && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
+ && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /usr/bin/zsh -d "${HOME}" coco) \
  && mkdir -p "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
  && chmod 0440 /etc/sudoers.d/coco
@@ -138,7 +138,7 @@ COPY container/zshrc.local /etc/zshrc.local
 RUN chmod 0644 \
  /etc/zshrc.local /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
  && echo 'source /etc/vimrc.local' >> /etc/vimrc \
- && echo 'source /etc/zshrc.local' >> /etc/zshrc 
+ && echo '. /etc/zshrc.local' >> /etc/zshrc 
 
 # --- entrypoint ---
 COPY container/entrypoint.sh /usr/local/bin/coco-entrypoint.sh
