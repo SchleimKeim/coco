@@ -1,5 +1,6 @@
 FROM almalinux:10
 
+ARG SHELL=/bin/bash
 ARG UID=1000
 ARG GID=1000
 ARG TZ=UTC
@@ -110,7 +111,7 @@ ARG HOME=/home/coco
 # games): rename it rather than skip, so `id` reads coco, not games.
 RUN (grp="$(getent group "${GID}" | cut -d: -f1)"; \
      if [[ -n "$grp" ]]; then [[ "$grp" = coco ]] || groupmod -n coco "$grp"; else groupadd -g "${GID}" coco; fi) \
- && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s /bin/bash -d "${HOME}" coco) \
+ && (getent passwd "${UID}" >/dev/null || useradd -u "${UID}" -g "${GID}" -M -s ${SHELL} -d "${HOME}" coco) \
  && mkdir -p "${HOME}" \
  && echo "coco ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coco \
  && chmod 0440 /etc/sudoers.d/coco
@@ -243,8 +244,7 @@ ENV HERMES_RUNTIME_DIR=${HOME}/.local/share/hermes/tools
 COPY container/bashrc.coco /etc/profile.d/coco-bashrc.sh
 COPY container/vimrc /etc/vimrc.local
 COPY container/zshrc.local /etc/zshrc.local
-RUN chmod 0644 \
- /etc/zshrc.local /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
+RUN chmod 0644 /etc/zshrc.local /etc/profile.d/coco-bashrc.sh /etc/vimrc.local \
  && echo 'source /etc/vimrc.local' >> /etc/vimrc \
  && echo 'source /etc/zshrc.local' >> /etc/zshrc 
 
@@ -258,4 +258,4 @@ LABEL coco.version=""
 USER coco
 WORKDIR ${HOME}
 ENTRYPOINT ["/usr/local/bin/coco-entrypoint.sh"]
-CMD ["/bin/bash", "-l"]
+CMD ["${SHELL}", "-l"]

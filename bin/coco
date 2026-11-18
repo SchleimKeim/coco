@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=2310
+# shellcheck disable=2310,2249
 
 
 set -euo pipefail
@@ -23,7 +23,7 @@ REPO_DIR="${SCRIPT_DIR%%/bin}"
 # pre-versioning behavior (empty COCO_VERSION, no version tag, no update
 # check, byte-identical build hash).
 COCO_VERSION=""
-if [ -f "$REPO_DIR/VERSION" ]; then
+if [[ -f "$REPO_DIR/VERSION" ]]; then
   COCO_VERSION="$(tr -d ' \t\r\n' < "$REPO_DIR/VERSION" || true)"
 fi
 case "$COCO_VERSION" in
@@ -150,9 +150,9 @@ ver_gt() {
   IFS=. read -r b1 b2 b3 <<< "$2"
   a1=$((10#${a1:-0})); a2=$((10#${a2:-0})); a3=$((10#${a3:-0}))
   b1=$((10#${b1:-0})); b2=$((10#${b2:-0})); b3=$((10#${b3:-0}))
-  if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ]; return; fi
-  if [ "$a2" -ne "$b2" ]; then [ "$a2" -gt "$b2" ]; return; fi
-  [ "$a3" -gt "$b3" ]
+  if [[ "$a1" -ne "$b1" ]]; then [[ "$a1" -gt "$b1" ]]; return; fi
+  if [[ "$a2" -ne "$b2" ]]; then [[ "$a2" -gt "$b2" ]]; return; fi
+  [[ "$a3" -gt "$b3" ]]
 }
 
 # reads `git ls-remote --tags` output on stdin, prints the highest X.Y.Z tag
@@ -204,10 +204,10 @@ check_update() {
   git -C "$REPO_DIR" remote get-url "$remote" >/dev/null 2>&1 || return 0
 
   now="$(date +%s)"
-  if [ "$FORCE_UPDATE_CHECK" != 1 ]; then
+  if [[ "$FORCE_UPDATE_CHECK" != 1 ]]; then
     next="$(cache_get NEXT_CHECK || true)"
     latest="$(cache_get LATEST_VERSION || true)"
-    if [ -n "$next" ] && [ "$now" -lt "$next" ]; then
+    if [[ -n "$next" ]] && [[ "$now" -lt "$next" ]]; then
       [ -n "$latest" ] || return 0
     else
       latest=""
@@ -216,7 +216,7 @@ check_update() {
     latest=""
   fi
 
-  if [ -z "$latest" ]; then
+  if [[ -z "$latest" ]]; then
     tmp="$CACHE_DIR/ls-remote.$$"
     mkdir -p "$CACHE_DIR" 2>/dev/null || true
     if ! GIT_TERMINAL_PROMPT=0 \
@@ -233,12 +233,12 @@ check_update() {
     cache_put "$((now + 86400))" "$latest"
   fi
 
-  if [ -z "$latest" ]; then
-    [ "$FORCE_UPDATE_CHECK" = 1 ] && echo "coco $COCO_VERSION (no releases published yet)"
+  if [[ -z "$latest" ]]; then
+    [[ "$FORCE_UPDATE_CHECK" = 1 ]] && echo "coco $COCO_VERSION (no releases published yet)"
     return 0
   fi
   if ! ver_gt "$latest" "$COCO_VERSION"; then
-    [ "$FORCE_UPDATE_CHECK" = 1 ] && echo "coco $COCO_VERSION is up to date."
+    [[ "$FORCE_UPDATE_CHECK" = 1 ]] && echo "coco $COCO_VERSION is up to date."
     return 0
   fi
 
@@ -277,7 +277,7 @@ do_cleanup() {
 
   keep_latest="$("$RUNTIME_BIN" inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || true)"
   keep_version=""
-  if [ -n "$COCO_VERSION" ]; then
+  if [[ -n "$COCO_VERSION" ]]; then
     keep_version="$("$RUNTIME_BIN" inspect --format '{{.Id}}' "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true)"
   fi
 
@@ -285,7 +285,7 @@ do_cleanup() {
   # dangling image has no repository, so name-based identification is
   # impossible; the label is the only correct discriminator.
   while IFS= read -r id; do
-    [ -n "$id" ] || continue
+    [[ -n "$id" ]] || continue
     targets+=("$id")
     labels+=("<none>  $id")
   done < <("$RUNTIME_BIN" images -f dangling=true -f label=coco.hash --format '{{.ID}}')
@@ -294,19 +294,19 @@ do_cleanup() {
   # prefix (with the colon) in the reference filter is load-bearing: a bare
   # prefix glob like "co*" would also match unrelated repos named "coco...".
   while IFS='|' read -r tag id size ago; do
-    [ -n "$tag" ] || continue
-    [ "$tag" = "latest" ] && continue
-    [ -n "$COCO_VERSION" ] || continue
-    [ "$tag" = "$COCO_VERSION" ] && continue
+    [[ -n "$tag" ]] || continue
+    [[ "$tag" = "latest" ]] && continue
+    [[ -n "$COCO_VERSION" ]] || continue
+    [[ "$tag" = "$COCO_VERSION" ]] && continue
     case "$tag" in *[!0-9.]*) continue ;; esac
     ver_gt "$COCO_VERSION" "$tag" || continue
-    [ "$id" = "$keep_latest" ] && continue
-    [ "$id" = "$keep_version" ] && continue
+    [[ "$id" = "$keep_latest" ]] && continue
+    [[ "$id" = "$keep_version" ]] && continue
     targets+=("$IMAGE_REPO:$tag")
     labels+=("$IMAGE_REPO:$tag  $id  $size  $ago")
   done < <("$RUNTIME_BIN" images -f "reference=$IMAGE_REPO:*" --format '{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedSince}}')
 
-  if [ "${#targets[@]}" -eq 0 ]; then
+  if [[ "${#targets[@]}" -eq 0 ]]; then
     echo "nothing to clean up. current: $IMAGE${COCO_VERSION:+ ($IMAGE_REPO:$COCO_VERSION)}"
     return 0
   fi
@@ -320,7 +320,7 @@ do_cleanup() {
   for t in "${targets[@]}"; do
     "$RUNTIME_BIN" rmi "$t" >/dev/null 2>&1 || { echo "  skipped $t (in use by a container)"; failed=1; }
   done
-  [ "$failed" = 1 ] && echo "Some images are still referenced by containers; run '$RUNTIME_BIN ps -a' to inspect."
+  [[ "$failed" = 1 ]] && echo "Some images are still referenced by containers; run '$RUNTIME_BIN ps -a' to inspect."
   echo "note: this only removes coco images. for reclaiming build cache, see: docker builder prune"
   return 0
 }
@@ -328,7 +328,7 @@ do_cleanup() {
 # --install: standalone, non-interactive PATH setup -- runs before the
 # docker preflight below so it works right after a fresh clone, even
 # before docker/podman itself is installed.
-if [ "$INSTALL" = 1 ]; then
+if [[ "$INSTALL" = 1 ]]; then
   if command -v coco >/dev/null 2>&1; then
     echo "coco is already on PATH."
   elif grep -qF "$SCRIPT_DIR" "$HOME/.bashrc" 2>/dev/null; then
@@ -340,7 +340,7 @@ if [ "$INSTALL" = 1 ]; then
   exit 0
 fi
 
-if [ "$RUNTIME_BIN" = "docker" ] && ! command -v docker >/dev/null 2>&1; then
+if [[ "$RUNTIME_BIN" = "docker" ]] && ! command -v docker >/dev/null 2>&1; then
   echo "error: docker not found on PATH. install docker (or a compatible CLI, e.g. podman) and try again." >&2
   exit 1
 fi
@@ -359,13 +359,13 @@ fi
 # on RUNTIME_BIN itself (already resolved above) avoids re-probing via
 # `--version`/grep for this.
 RUN_USERNS_ARGS=()
-if [ "$RUNTIME_BIN" = "podman" ]; then
+if [[ "$RUNTIME_BIN" = "podman" ]]; then
   # real docker would fail this --format template (no .Host.Security.Rootless
   # field); harmless here since we only run it for podman. `|| true` since
   # this is a plain assignment, not inside if/&& -- set -e would otherwise
   # end the script on any unexpected non-zero here.
   PODMAN_ROOTLESS="$("$RUNTIME_BIN" info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" || true
-  if [ "$PODMAN_ROOTLESS" = "true" ]; then
+  if [[ "$PODMAN_ROOTLESS" = "true" ]]; then
     RUN_USERNS_ARGS+=(--userns=keep-id)
   fi
 fi
@@ -398,7 +398,7 @@ HOST_PORTS=()
 IFS=',' read -r -a HOST_PORT_ITEMS <<< "$COCO_HOST_PORTS"
 for p in "${HOST_PORT_ITEMS[@]+"${HOST_PORT_ITEMS[@]}"}"; do
   p="${p//[[:space:]]/}"
-  [ -z "$p" ] && continue
+  [[ -z "$p" ]] && continue
   if ! [[ "$p" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
     echo "error: COCO_HOST_PORTS: invalid entry '$p' (expected a port like 11434 or a range like 8000-8010)" >&2
     exit 2
@@ -406,15 +406,15 @@ for p in "${HOST_PORT_ITEMS[@]+"${HOST_PORT_ITEMS[@]}"}"; do
   HOST_PORTS+=("$p")
 done
 PASTA_BIN=""
-if [ "$RUNTIME_BIN" = "podman" ] && [ "${PODMAN_ROOTLESS:-}" = "true" ]; then
+if [[ "$RUNTIME_BIN" = "podman" ]] && [[ "${PODMAN_ROOTLESS:-}" = "true" ]]; then
   PASTA_BIN="$("$RUNTIME_BIN" info --format '{{.Host.Pasta.Executable}}' 2>/dev/null)" || PASTA_BIN=""
-  if [ -z "$PASTA_BIN" ] || [ "$PASTA_BIN" = "<no value>" ]; then
+  if [[ -z "$PASTA_BIN" ]] || [[ "$PASTA_BIN" = "<no value>" ]]; then
     PASTA_BIN="$(command -v pasta 2>/dev/null || true)"
   fi
 fi
 RUN_NET_ARGS=()
-if [ "${#HOST_PORTS[@]}" -gt 0 ]; then
-  if [ -n "$PASTA_BIN" ]; then
+if [[ "${#HOST_PORTS[@]}" -gt 0 ]]; then
+  if [[ -n "$PASTA_BIN" ]]; then
     # syntax is mode:opt,opt,... -- a colon after the mode, then one -T
     # per entry: podman splits the option string on commas into pasta's
     # argv, so a comma-joined port list would reach pasta as stray
@@ -454,7 +454,7 @@ fi
 # handled before any .coco/ dir creation below: --cleanup is not tied to a
 # project, and must not litter a stray .coco/ in whatever directory it's
 # run from.
-if [ "$CLEANUP" = 1 ]; then
+if [[ "$CLEANUP" = 1 ]]; then
   do_cleanup
   exit 0
 fi
@@ -479,7 +479,7 @@ BUILD_HASH="$(printf '%s' "$HASH_INPUT" | sha256_hex | cut -c1-16)"
 CURRENT_HASH="$("$RUNTIME_BIN" inspect --format '{{ index .Config.Labels "coco.hash" }}' "$IMAGE" 2>/dev/null || true)"
 
 BUILD_TAGS=(-t "$IMAGE")
-[ -n "$COCO_VERSION" ] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
+[[ -n "$COCO_VERSION" ]] && BUILD_TAGS+=(-t "$IMAGE_REPO:$COCO_VERSION")
 
 # an explicit `--rebuild` is the user's signal to also refresh the coding
 # agent CLIs (claude, codex, gemini-cli, cursor, opencode, qwen): they're installed unpinned
@@ -489,11 +489,12 @@ BUILD_TAGS=(-t "$IMAGE")
 # invalidates naturally when the Dockerfile itself changed, and shouldn't
 # force a fresh agent pull on every unrelated content change.
 AGENTS_BUST_ARGS=()
-[ "$REBUILD" = 1 ] && AGENTS_BUST_ARGS=(--build-arg COCO_AGENTS_CACHE_BUST="$(date +%s)")
+[[ "$REBUILD" = 1 ]] && AGENTS_BUST_ARGS=(--build-arg COCO_AGENTS_CACHE_BUST="$(date +%s)")
 
-if [ "$REBUILD" = 1 ] || [ "$CURRENT_HASH" != "$BUILD_HASH" ]; then
+if [[ "$REBUILD" = 1 ]] || [[ "$CURRENT_HASH" != "$BUILD_HASH" ]]; then
   echo "Building $IMAGE${COCO_VERSION:+ ($COCO_VERSION)} (hash changed or --rebuild requested)..."
   "$RUNTIME_BIN" build \
+    --build-arg SHELL="$SHELL" \
     --build-arg UID="$BUILD_UID" \
     --build-arg GID="$BUILD_GID" \
     --build-arg TZ="$BUILD_TZ" \
@@ -510,19 +511,19 @@ fi
 # even when no build ran (e.g. it was manually deleted while coco:latest
 # still matches the hash -- re-tagging is free, forcing a rebuild for pure
 # bookkeeping would not be).
-if [ -n "$COCO_VERSION" ]; then
+if [[ -n "$COCO_VERSION" ]]; then
   "$RUNTIME_BIN" tag "$IMAGE" "$IMAGE_REPO:$COCO_VERSION" 2>/dev/null || true
 fi
 
 # --rebuild is a standalone action, like --cleanup: report and stop instead
 # of falling through into project setup / agent selection / run.
-if [ "$REBUILD" = 1 ]; then
+if [[ "$REBUILD" = 1 ]]; then
   exit 0
 fi
 
 PROJECT_DIR="$(pwd)"
 
-if [ "$PROJECT_DIR" = "$HOME" ] && [ "$FORCE_UPDATE_CHECK" != 1 ]; then
+if [[ "$PROJECT_DIR" = "$HOME" ]] && [[ "$FORCE_UPDATE_CHECK" != 1 ]]; then
   echo "WARNING: you are about to run coco in \$HOME ($HOME)."
   echo "This will mount your entire home directory into the container."
   ask_yn "Continue anyway?" n || exit 1
@@ -535,9 +536,9 @@ touch "$COCO_DIR/bash_history"
 CONFIG_FILE="$COCO_DIR/config"
 
 # --- gitignore check ---
-if [ -d "$PROJECT_DIR/.git" ]; then
+if [[ -d "$PROJECT_DIR/.git" ]]; then
   GITIGNORE="$PROJECT_DIR/.gitignore"
-  if [ ! -f "$GITIGNORE" ] || ! grep -qxF ".coco/" "$GITIGNORE" 2>/dev/null; then
+  if [[ ! -f "$GITIGNORE" ]] || ! grep -qxF ".coco/" "$GITIGNORE" 2>/dev/null; then
     if ask_yn "Add .coco/ to .gitignore?"; then
       echo ".coco/" >> "$GITIGNORE"
     fi
@@ -557,7 +558,7 @@ fi
 # docker preflight -- no point offering an update when docker is broken;
 # before agent selection below, and before the build gate further down, so
 # a git pull here is picked up by that gate's hash on the re-exec).
-if [ "$SKIP_UPDATE_CHECK" != 1 ]; then
+if [[ "$SKIP_UPDATE_CHECK" != 1 ]]; then
   check_update
 fi
 
@@ -567,7 +568,7 @@ fi
 # (declined, already current, or no-op'd) stop after reporting -- don't
 # fall through into agent selection / build / run just because the user
 # asked a question.
-if [ "$FORCE_UPDATE_CHECK" = 1 ]; then
+if [[ "$FORCE_UPDATE_CHECK" = 1 ]]; then
   exit 0
 fi
 
@@ -645,7 +646,7 @@ select_agents_plain() {
     # the whole coco run instead of just skipping that token.
     [[ "$n" =~ ^[0-9]+$ ]] || { echo "  skipping '$n' (expected a number)"; continue; }
     local idx=$((n - 1))
-    if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#AGENT_NAMES[@]}" ]; then
+    if [[ "$idx" -ge 0 ]] && [[ "$idx" -lt "${#AGENT_NAMES[@]}" ]]; then
       chosen+=("${AGENT_NAMES[$idx]}")
     fi
   done
@@ -656,7 +657,7 @@ select_agents_plain() {
 # interactive checklist: up/down move, space toggle, enter confirm. pure
 # bash raw-mode read + ANSI redraw -- no whiptail/dialog/fzf dependency.
 select_agents() {
-  if [ ! -t 0 ] || [ ! -t 1 ]; then
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
     select_agents_plain
     return $?
   fi
@@ -691,7 +692,7 @@ select_agents() {
   draw
   while true; do
     IFS= read -rsn1 key
-    if [ "$key" = $'\x1b' ]; then
+    if [[ "$key" = $'\x1b' ]]; then
       # -t takes whole seconds only: macOS's stock bash (3.2) rejects a
       # fractional timeout ("invalid timeout specification"). 1s is still
       # well above the sub-millisecond gap between an arrow key's bytes.
