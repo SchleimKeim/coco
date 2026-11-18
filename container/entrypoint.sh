@@ -30,7 +30,7 @@ fi
 # denied" that aborts the entrypoint. -xdev stops the descent at the mount
 # boundary; the mountpoint prune skips the mount root itself.
 sudo mkdir -p "$HOME"
-sudo find "$HOME" -xdev -type d -exec mountpoint -q {} \; -prune -o -exec chown -h coco:coco {} +
+sudo find "$HOME" -mount -xdev -type d -exec chown -h coco:coco {} +
 
 # ~/.claude is bind-mounted as a directory; ~/.claude.json lives inside it
 # (as claude.json) and is symlinked here, so claude's atomic config writes
